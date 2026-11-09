@@ -795,3 +795,46 @@ def re_organise_data(n_data_all, f_data_all, neuron_idx_all = None):
 
 
     return n_data_reorganised, f_data_reorganised, idx_neuron_reorganised
+
+
+
+### juste pour etre sure que je garde les memes unités d'une analyse a l'autre et etre sure que tout matche. 
+
+def filter_neurons(files_a1, save_directory,
+                   neuron_idx_reorganised, n_data_reorganised):
+    neuron_idx_01 = []
+
+    for file in files_a1:
+        with open(
+            save_directory + file + "_playback_0.1_neuron_idx_ss", "rb"
+        ) as fp:
+            idx_data_s = pickle.load(fp)
+            neuron_idx_01.append(idx_data_s[:12])
+
+    _, _, neuron_idx_01 = re_organise_data(
+        neuron_idx_01, neuron_idx_01, neuron_idx_01
+    )
+
+    # Calculer les masques avant le filtrage
+    masks = [
+        np.isin(np.ravel(pb), np.ravel(ref))
+        for pb, ref in zip(neuron_idx_reorganised, neuron_idx_01)
+    ]
+
+    # Appliquer les mêmes masques aux identifiants et aux données
+    filtered_idx = [
+        list(np.ravel(pb)[m])
+        for pb, m in zip(neuron_idx_reorganised, masks)
+    ]
+    filtered_data = [
+        np.asarray(d)[m]
+        for d, m in zip(n_data_reorganised, masks)
+    ]
+
+    for s, (names, d) in enumerate(zip(filtered_idx, filtered_data)):
+        assert len(names) == d.shape[0], (
+            f"Mismatch session {s}: {len(names)} vs {d.shape[0]}"
+        )
+
+    return filtered_idx, filtered_data
+
