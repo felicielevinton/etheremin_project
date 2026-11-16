@@ -82,7 +82,6 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
 - `Mock_frequency` corresponds to the sound that would follow the animal's position during
   playback. `Mock_change` flags changes in that signal. Felicie's notebook describes
   `Mock_frequency` as 0 during tracking. Inspect values when needed.
-- `Block` carries block information. Its detailed meaning needs experiment-specific confirmation.
 - `Change_direction` and `Mock_direction` are derived from differences in the corresponding
   frequency signals, with values -1, 0, or 1 in the loading code.
 - `Position` is reconstructed from frequency in Felicie's loading code. The code chooses
