@@ -27,15 +27,22 @@ describe inspected data and should not be assumed to apply to every animal or se
 Example triad in the workspace data directory
 
 ```text
-FETA_hs_0_playback_0.005_data_ss
-FETA_hs_0_playback_0.005_feature_ss
-FETA_hs_0_playback_0.005_neuron_idx_ss
+FETA_hs_0_AC_playback_0.005_data_ss
+FETA_hs_0_AC_playback_0.005_feature_ss
+FETA_hs_0_AC_playback_0.005_neuron_idx_ss
 ```
 
 - All three are binary Python pickle files without filename extensions, loaded with
   `pickle.load()` from a file opened in `rb` mode.
 - The animal is named in the prefix, for example FETA, HERCULE, MMELOIK, or NAPOLEON.
   Headstage is 0 or 1. Available headstages depend on the animal.
+- Filenames include the anatomical region after the headstage, using
+  `{animal}_hs_{headstage}_{region}_playback_0.005_{suffix}`.
+  The user confirmed that FETA headstage 1 and HERCULE headstage 1 are PMC.
+  The remaining six animal/headstage collections use AC, matching Felicie's A1 list.
+  All 24 local files were renamed in November 2026. Use the region-qualified names
+  for all three files in a collection. The exploration notebook checks the selected
+  region, file availability, session counts, and per-session alignment when loading.
 - The user clarified that `playback` in these filenames does not identify the condition
   of every bin. Use the `Condition` feature to split tracking and playback.
 - `0.005` specifies 5 ms bins (`dt = 0.005` seconds, 200 bins per second).
