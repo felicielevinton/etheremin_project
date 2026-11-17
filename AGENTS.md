@@ -20,7 +20,6 @@ describe inspected data and should not be assumed to apply to every animal or se
   Dependencies are managed with uv. The Windows interpreter is `.venv/Scripts/python.exe`.
 - `felicie/load_data.ipynb` and `felicie/utils_load_data.py` are Felicie's original material.
 - `notebooks/explore_data.ipynb` contains the user's exploration and event-response analyses.
-- `movement_bouts/analyse_movement_bouts.ipynb` contains the movement-bout analysis.
 - Notebook working directories can vary. Check the kernel's directory when resolving paths.
 
 ## Data files and alignment
