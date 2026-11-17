@@ -105,3 +105,41 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   comes from the available loading code. Verify physical units and scaling before quantitative
   interpretation, especially hard-coded speed factors in that code.
 - These position fields already include preprocessing smoothing.
+
+
+## Derived movement-bout data
+
+- Save derived tables in the workspace's `data/derived/movement_bouts/` directory,
+  which is `../data/derived/movement_bouts/` from the repository root and
+  `../../data/derived/movement_bouts/` from `movement_bouts/`.
+- `movement_bouts/analyse_movement_bouts.ipynb` loads all AC feature collections,
+  calls `detect_movement_bouts()` from the adjacent `utils.py`, and exports the tables
+  in its save cell immediately after detection. Rerun detection and saving together
+  when changing extraction parameters.
+- `movement_bouts/analyse_neuronal_activity.ipynb` reloads these derived tables for
+  subsequent neural analysis. Run both notebooks with `movement_bouts/` as the kernel's
+  working directory so helpers can be imported directly from `utils`.
+- The user prefers pickle for lab-wide readability. Save DataFrames with
+  `DataFrame.to_pickle()` and reload with `pd.read_pickle()`. Parameters use JSON.
+
+| File | Contents |
+| --- | --- |
+| `movement_bouts.pkl` | One row per movement onset, including unfinished bouts |
+| `immobility_bouts.pkl` | All detected immobility segments, including short segments, with a `qualifies` flag |
+| `session_info.pkl` | Mapping from global session-entry index to animal, headstage, source session, feature file, and recording durations |
+| `parameters.json` | `DT`, `SPEED_X_FACTOR`, `VELOCITY_THRESHOLD`, `MIN_IMMOBILITY_S`, Git commit, uncommitted-change flag, and UTC export time |
+
+### Session identity and saved fields
+
+- Both bout tables have an `idx` column linking to `session_info.loc[idx]` and the
+  original flattened `features[idx]` list. Preserve the saved `session_info` index.
+  Its `session` column is the zero-based session index within that animal/headstage
+  collection, used to select the corresponding entry from its original pickle files.
+- `session_info["feature_file"]` identifies the source collection. Replacing the
+  `_feature_ss` suffix with `_data_ss` or `_neuron_idx_ss` identifies its aligned
+  neural-data or neuron-ID file. Use the saved `session` to select the entry within it.
+- Movement fields are `animal`, `headstage`, `session`, `condition`, `onset_bin`,
+  `onset_time_s`, `end_bin`, `end_time_s`, `initial_position`, `initial_direction`,
+  `final_position`, `total_movement`, `mean_speed`, and `idx`.
+- Immobility fields are `start_bin`, `stop_bin`, `duration_s`, `qualifies`, `idx`,
+  `animal`, `headstage`, and `session`.
