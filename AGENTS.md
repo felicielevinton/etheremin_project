@@ -181,13 +181,22 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   the workspace root. Load with `pd.read_pickle()`. This dictionary contains
   `sessions[idx][condition]`, `settings`, `session_info`, `skipped_sessions`, and
   global `position_limits`. The current 5-bin file has 160 models for 80 sessions.
-- To browse saved PCAs, run notebook sections 1 and 8, skipping extraction and
-  fitting. `make_interactive_pca_browser()` combines an ipywidgets SelectionSlider
-  (`continuous_update=False`) with one Plotly FigureWidget. Dependencies include
-  plotly and anywidget, managed by uv. Drag/scroll rotates/zooms the two PC1/PC2/PC3
-  panels; bidirectional camera callbacks synchronize views, with re-entry guards.
-  Session changes update the same six traces and preserve the camera. No callback
-  performs preparation, fitting, or Matplotlib rendering. Cross/circle markers show
-  initial left/right direction; position colors use fixed limits across all sessions.
-  Hover labels retain bout IDs, window start times, and starting positions. Section 6
-  remains a static Matplotlib preview; section 8 is the interactive viewer.
+- To browse saved PCAs, run sections 1, 8, and 9. Section 8 displays a position
+  viewer; section 9 displays a direction viewer. Each has its own session slider
+  and one Plotly FigureWidget, created by `make_interactive_pca_browser()` with
+  `color_by="position"` or `color_by="direction"`. Each viewer has two 3D panels
+  (tracking/playback) with cameras linked only within that viewer. Session and
+  camera controls are independent between viewers. All points are circles;
+  direction colors are blue left, red right, gray unknown. Position limits are
+  fixed across sessions. Sliders update existing traces without preparation or
+  fitting. Dependencies plotly/anywidget are managed by uv. Section 6 remains
+  a static Matplotlib preview.
+
+- User explicitly selected blue for left and red for right in both PCA direction
+  panels; this overrides the earlier reservation of red for tracking in these panels.
+
+- Section 9 is the direction-colored viewer with starting-position
+  filtering: all, left (<14), or right (>=14). The midpoint defaults to 14 on the
+  reconstructed 0?28 scale and is adjustable. `filter_position=True` enables the
+  selector. Filtering hides saved observations without refitting; full-session axis
+  ranges and linked cameras are preserved, including for empty selections.

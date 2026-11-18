@@ -338,12 +338,20 @@ def plot_pca_session(fits, *, title, position_limits=None):
     return fig_pca, axes_pca
 
 
-def make_interactive_pca_browser(pca_cache):
-    """Build a saved-session slider and two 3D panels with linked cameras.
+def make_interactive_pca_browser(
+    pca_cache, *, color_by="position", width=1400, filter_position=False, midpoint=14.0
+):
+    """Browse saved tracking/playback PCAs with one independent session slider.
 
-    Updates the same FigureWidget in place. No PCA fitting, data preparation,
-    file loading, or Matplotlib figure creation occurs in slider callbacks.
+    color_by selects starting-position or direction colors; all points are dots.
+    The two panels' cameras are linked within this browser only. Creating two
+    browsers gives independent session and camera controls without refitting.
+    filter_position adds an all/left/right starting-position selector. Left is
+    strictly below midpoint; right includes midpoint. Full-session axis ranges
+    stay fixed when filtering, including when no points match.
     """
+    if color_by not in ("position", "direction"):
+        raise ValueError("color_by must be 'position' or 'direction'.")
     import ipywidgets as widgets
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
@@ -357,53 +365,69 @@ def make_interactive_pca_browser(pca_cache):
         description="Session", continuous_update=False,
         layout=widgets.Layout(width="95%"),
     )
+    position_filter = widgets.ToggleButtons(
+        options=[("All", "all"), (f"Left (< {midpoint:g})", "left"), (f"Right (>= {midpoint:g})", "right")],
+        description="Start:",
+    ) if filter_position else None
+    encoding = "Starting position" if color_by == "position" else "Direction"
+    panels = ((0, "Tracking", encoding), (1, "Playback", encoding))
     figure = go.FigureWidget(make_subplots(
         rows=1, cols=2, specs=[[{"type": "scene"}, {"type": "scene"}]],
-        subplot_titles=["Tracking", "Playback"], horizontal_spacing=0.04,
+        subplot_titles=[f"{name}: {encoding}" for _, name, encoding in panels],
+        horizontal_spacing=0.02,
     ))
-    # FigureWidget sends this configuration to its notebook front end.
     figure._config = {"scrollZoom": True, "displaylogo": False}
-    directions = ((-1, "x", "Left"), (1, "circle", "Right"), (0, "square", "Zero / unknown direction"))
-    for col in (1, 2):
-        for direction, symbol, label in directions:
+    directions = ((-1, "Left", "#0072B2"), (1, "Right", "#D62728"), (0, "Zero / unknown direction", "#999999"))
+    panel_traces = []
+    for panel, (_, name, encoding) in enumerate(panels):
+        traces = []
+        groups = ((None, "Starting position", None),) if encoding == "Starting position" else directions
+        for direction, label, color in groups:
+            marker = {"symbol": "circle", "size": 4, "opacity": 0.7}
+            marker.update({"coloraxis": "coloraxis"} if color is None else {"color": color})
             figure.add_trace(go.Scatter3d(
                 x=[], y=[], z=[], mode="markers", name=label, legendgroup=label,
-                marker={"symbol": symbol, "size": 4, "opacity": 0.7, "coloraxis": "coloraxis"},
+                marker=marker, showlegend=False,
                 hovertemplate=(
                     "Bout %{customdata[0]:.0f}<br>Bin start: %{customdata[1]:.3f} s"
-                    "<br>Starting position: %{customdata[2]:.2f}"
-                    "<br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<br>PC3: %{z:.2f}<extra>%{fullData.name}</extra>"
+                    "<br>Starting position: %{customdata[2]:.2f}<br>Direction: %{customdata[3]}"
+                    "<br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<br>PC3: %{z:.2f}<extra></extra>"
                 ),
-            ), row=1, col=col)
+            ), row=panel // 2 + 1, col=panel % 2 + 1)
+            traces.append((figure.data[-1], direction, label))
+        panel_traces.append(traces)
+
     figure.update_layout(
-        template="plotly_white", height=650,
-        margin={"l": 0, "r": 90, "t": 90, "b": 0},
+        template="plotly_white", width=width, height=700,
+        margin={"l": 0, "r": 65, "t": 85, "b": 40},
         coloraxis={
             "colorscale": "Viridis", "cmin": pca_cache["position_limits"][0],
             "cmax": pca_cache["position_limits"][1],
-            "colorbar": {"title": "Starting position", "len": 0.8},
+            "colorbar": {"title": "Starting position", "len": 0.85, "y": 0.5, "thickness": 15},
         },
         legend={"orientation": "h", "y": -0.02}, uirevision="preserve-pca-camera",
     )
     figure.update_scenes(aspectmode="data", camera={"eye": {"x": 1.5, "y": 1.5, "z": 1.2}})
-
-    # Equality and re-entry guards prevent camera updates bouncing indefinitely.
+    scene_names = ("scene", "scene2")
     syncing = False
 
-    def sync_camera(target_name, camera):
+    def sync_camera(source, camera):
         nonlocal syncing
-        target = figure.layout[target_name]
-        camera_data = camera.to_plotly_json()
-        if syncing or target.camera.to_plotly_json() == camera_data:
+        if syncing:
             return
+        camera_data = camera.to_plotly_json()
         syncing = True
         try:
-            target.camera = camera_data
+            with figure.batch_update():
+                for scene_name in scene_names:
+                    target = figure.layout[scene_name]
+                    if target.camera.to_plotly_json() != camera_data:
+                        target.camera = camera_data
         finally:
             syncing = False
 
-    figure.layout.scene.on_change(lambda scene, camera: sync_camera("scene2", camera), "camera")
-    figure.layout.scene2.on_change(lambda scene, camera: sync_camera("scene", camera), "camera")
+    for scene_name in scene_names:
+        figure.layout[scene_name].on_change(sync_camera, "camera")
 
     def show_session(idx):
         info = session_info.loc[idx]
@@ -412,42 +436,58 @@ def make_interactive_pca_browser(pca_cache):
         with figure.batch_update():
             figure.layout.title.text = (
                 f"idx={idx}: {info['animal']} hs{info['headstage']}, session {info['session']}"
-                "<br><sup>Drag to rotate; scroll to zoom. Both camera views are linked.</sup>"
+                "<br><sup>Drag to rotate; scroll to zoom. The two camera views are linked.</sup>"
             )
-            for panel, (condition, name) in enumerate(((0, "Tracking"), (1, "Playback"))):
+            for panel, (condition, name, encoding) in enumerate(panels):
                 fit = fits.get(condition)
                 available = fit is not None and fit["model"].n_components_ >= 3
                 rows = fit["results"] if available else None
+                if available and position_filter is not None:
+                    if position_filter.value == "left":
+                        rows = rows.loc[rows["initial_position"] < midpoint]
+                    elif position_filter.value == "right":
+                        rows = rows.loc[rows["initial_position"] >= midpoint]
                 figure.layout.annotations[panel].text = (
-                    f"{name}: separate PCA ({len(rows)} observations)" if available
+                    f"{name}: {encoding.lower()} ({len(rows)} observations)" if available
                     else f"{name}: fewer than three components available"
                 )
-                scene = figure.layout["scene" if panel == 0 else "scene2"]
+                scene = figure.layout[scene_names[panel]]
                 for axis, pc in zip((scene.xaxis, scene.yaxis, scene.zaxis), range(3)):
                     axis.title.text = (
                         f"PC{pc + 1} ({fit['model'].explained_variance_ratio_[pc]:.1%})"
                         if available else f"PC{pc + 1}"
                     )
-                for offset, (direction, symbol, label) in enumerate(directions):
-                    trace = figure.data[panel * 3 + offset]
-                    if available:
-                        mask = rows["initial_direction"] == direction
-                        if direction == 0:
-                            mask = mask | rows["initial_direction"].isna()
-                        subset = rows.loc[mask]
-                        trace.x, trace.y, trace.z = (subset[pc].to_numpy() for pc in ("PC1", "PC2", "PC3"))
-                        trace.marker.color = subset["initial_position"].to_numpy()
-                        trace.customdata = np.column_stack((
-                            subset.index.get_level_values("bout_id"),
-                            subset.index.get_level_values("bin_start_s"), subset["initial_position"],
-                        ))
-                        trace.showlegend = len(subset) > 0 and label not in shown_legend_labels
-                        if len(subset):
-                            shown_legend_labels.add(label)
+                    if available and position_filter is not None:
+                        values = fit["results"][f"PC{pc + 1}"]
+                        padding = max((values.max() - values.min()) * 0.05, 1e-6)
+                        axis.range = [values.min() - padding, values.max() + padding]
+                for trace, direction, label in panel_traces[panel]:
+                    if not available:
+                        trace.x, trace.y, trace.z, trace.customdata = [], [], [], []
+                        trace.showlegend = False
+                        continue
+                    if direction is None:
+                        subset = rows
+                    elif direction == 0:
+                        subset = rows.loc[~rows["initial_direction"].isin((-1, 1))]
                     else:
-                        trace.x, trace.y, trace.z = [], [], []
-                        trace.marker.color, trace.customdata, trace.showlegend = [], [], False
+                        subset = rows.loc[rows["initial_direction"] == direction]
+                    trace.x, trace.y, trace.z = (subset[pc].to_numpy() for pc in ("PC1", "PC2", "PC3"))
+                    if direction is None:
+                        trace.marker.color = subset["initial_position"].to_numpy()
+                    customdata = np.empty((len(subset), 4), dtype=object)
+                    customdata[:, 0] = subset.index.get_level_values("bout_id")
+                    customdata[:, 1] = subset.index.get_level_values("bin_start_s")
+                    customdata[:, 2] = subset["initial_position"]
+                    customdata[:, 3] = subset["initial_direction"].map({-1: "Left", 1: "Right"}).fillna("Zero / unknown")
+                    trace.customdata = customdata
+                    trace.showlegend = direction is not None and len(subset) > 0 and label not in shown_legend_labels
+                    if trace.showlegend:
+                        shown_legend_labels.add(label)
 
     slider.observe(lambda change: show_session(change["new"]), names="value")
+    if position_filter is not None:
+        position_filter.observe(lambda change: show_session(slider.value), names="value")
     show_session(slider.value)
-    return widgets.VBox([slider, figure])
+    controls = [slider, position_filter, figure] if position_filter is not None else [slider, figure]
+    return widgets.VBox(controls, layout=widgets.Layout(width="100%", overflow="auto"))
