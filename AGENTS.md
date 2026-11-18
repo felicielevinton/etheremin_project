@@ -235,3 +235,22 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   adjustable minimum |final-initial| cutoff, initially 2 position units. Retain >=
   cutoff, exclude missing endpoints, and filter all windows of each bout together.
   This hides points without refitting; full-session axis ranges stay fixed.
+
+## Shared representation/evaluation interface
+
+- `movement_bouts/ANALYSIS_DATA_FORMAT.md` documents the common observation format
+  for neuronal responses, PCA, future UMAP analyses and metrics. Read it before
+  adding representations or evaluation functions.
+- Evaluation helpers belong in `movement_bouts/evaluation.py`, separate from
+  extraction, model fitting and plotting in `utils.py`. The new module currently
+  provides `validate_data_labels()`; metrics remain to be implemented.
+- Use aligned numeric `data` and metadata `labels` DataFrames with identical unique
+  `(bout_id, bin_start_s)` indices and row order. Select needed coordinate and
+  target columns directly from saved results; no splitting/conversion helper is
+  required. Preserve observation IDs when filtering. Missing targets are handled
+  per metric, not removed globally.
+
+- Prefer direct column selection over extra adapter layers. The user asked to remove
+  the unnecessary coordinate/label splitting helper: the notebook already separates
+  PCA inputs and labels. Add abstractions for concrete repeated work, not speculative
+  future reuse.
