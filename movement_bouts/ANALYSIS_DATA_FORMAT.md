@@ -123,8 +123,29 @@ validate_data_labels(window_data, window_labels)
 - Describe every result by session, condition, representation/basis, dimensions,
   time window, filters and sample counts. A score belongs to that chosen space.
 - Metric helpers belong in `evaluation.py` and accept the aligned pair. Keep
-  extraction, embedding fitting and plotting separate. No metrics are implemented
-  in this format-only step; silhouette separation is the agreed first candidate.
+  extraction, embedding fitting and plotting separate. Descriptive label regression
+  is implemented; silhouette separation and randomization controls remain to add.
 - Save per-observation outputs with the same index. Save aggregate scores in a
   separate summary table, with their analysis settings. Existing PCA bundles do
   not need rewriting to follow this interface.
+
+## Descriptive regression
+
+`evaluation.fit_label_regression(data, labels, target="initial_position")` fits
+ordinary linear regression with an intercept to one numeric continuous label.
+Use explicit features/PCs and masks before calling; the helper does not group
+sessions, conditions or windows automatically. It also works directly with the
+existing `pca_input` and `pca_labels` pair.
+
+The result dictionary contains `model`, `target`, descriptive `r2`, `mae`,
+`n_excluded`, and `predictions`. The latter retains the used observation index
+with `observed`, `fitted`, and `residual` (observed minus fitted) columns. Only
+rows with missing/nonfinite target values are omitted. A nonconstant target and
+at least two valid observations are required. Other missing labels are irrelevant.
+
+`plot_label_regression(result)` draws observed versus fitted values and an
+identity line without fitting anything. Both metrics describe the same data used
+to fit, with no standardization, cross-validation or randomization. They do not
+establish significance or prediction of new bouts. Compare the same feature
+counts/windows when interpreting scores; adding predictors can improve an
+in-sample fit without indicating a stronger biological relationship.

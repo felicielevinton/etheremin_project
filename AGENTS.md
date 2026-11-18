@@ -243,7 +243,8 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   adding representations or evaluation functions.
 - Evaluation helpers belong in `movement_bouts/evaluation.py`, separate from
   extraction, model fitting and plotting in `utils.py`. The new module currently
-  provides `validate_data_labels()`; metrics remain to be implemented.
+  provides `validate_data_labels()`, `fit_label_regression()`, and
+  `plot_label_regression()`. Silhouette and randomization remain to be added.
 - Use aligned numeric `data` and metadata `labels` DataFrames with identical unique
   `(bout_id, bin_start_s)` indices and row order. Select needed coordinate and
   target columns directly from saved results; no splitting/conversion helper is
@@ -254,3 +255,12 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   the unnecessary coordinate/label splitting helper: the notebook already separates
   PCA inputs and labels. Add abstractions for concrete repeated work, not speculative
   future reuse.
+
+- Section 15 demonstrates descriptive ordinary linear regression for any numeric
+  continuous label using explicitly selected features/coordinates. Default: session
+  0, PC1-PC3, initial_position, last window; tracking/playback fitted separately.
+  `fit_label_regression()` returns model, target, in-sample R2/MAE, n_excluded,
+  and indexed observed/fitted/residual values. Exclude only missing/nonfinite target
+  rows; reject insufficient/constant/nonnumeric targets. No held-out evaluation,
+  scaling, PCA refitting or randomization. Plotting is separate. Unit checks live
+  in `movement_bouts/test_evaluation.py` and run with unittest discovery.
