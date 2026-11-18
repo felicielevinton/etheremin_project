@@ -258,9 +258,19 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
 
 - Section 15 demonstrates descriptive ordinary linear regression for any numeric
   continuous label using explicitly selected features/coordinates. Default: session
-  0, PC1-PC3, initial_position, last window; tracking/playback fitted separately.
+  0, selected PCs (currently all), initial_position, last window; tracking/playback fitted separately.
   `fit_label_regression()` returns model, target, in-sample R2/MAE, n_excluded,
   and indexed observed/fitted/residual values. Exclude only missing/nonfinite target
   rows; reject insufficient/constant/nonnumeric targets. No held-out evaluation,
   scaling, PCA refitting or randomization. Plotting is separate. Unit checks live
   in `movement_bouts/test_evaluation.py` and run with unittest discovery.
+
+- Section 16 repeats section 15 regression with `final_position`, reusing the
+  session, PC selection and window settings. Starting-position results remain
+  separate. No displacement filter is applied; missing endpoints are excluded
+  by the generic helper. Both analyses are descriptive/in-sample.
+
+- Section 17 repeats destination regression for `abs(final_position -
+  initial_position) > 5`, including both directions and preserving PC/window
+  settings. Missing endpoints are excluded. The earlier signed >8 filter was
+  corrected to match the goal of excluding bouts ending close to their start.
