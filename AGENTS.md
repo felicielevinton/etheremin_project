@@ -143,3 +143,26 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   `final_position`, `total_movement`, `mean_speed`, and `idx`.
 - Immobility fields are `start_bin`, `stop_bin`, `duration_s`, `qualifies`, `idx`,
   `animal`, `headstage`, and `session`.
+
+## Derived premotor neuronal data
+
+- `movement_bouts/utils.py` provides `extract_premotor_bouts()` for one session
+  and `extract_all_premotor_bouts()` to load collections once and process their
+  sessions individually. Pass `session_info.loc[[idx]]` to the latter for one session.
+- `movement_bouts/analyse_neuronal_activity.ipynb` extracts and saves the tables
+  in `../data/derived/premotor_activity/` relative to the repository root.
+- `neuronal_bouts.pkl` has one `spike_counts` column. Its index is the original
+  `movement_bouts` row index, never reset. Each cell holds an independent array
+  shaped `(neurons, original time bins)` of spike counts. The current window is
+  `[-0.5, 0)` seconds, giving 100 bins at 5 ms resolution, excluding movement onset.
+- `movement_bouts` remains the reference for all behavioral metadata. Join neural
+  rows by index; select a session before stacking arrays, since neuron counts vary.
+- `neuron_ids_by_session.pkl` has a `neuron_ids` column indexed by session `idx`.
+  `excluded_bouts.pkl` records skipped bout indices and exclusion reasons. Incomplete
+  windows are skipped without failing the session; immobility is not checked again.
+- `parameters.json` records extraction timing, source-table SHA-256 fingerprints,
+  source bout-detection parameters, session indices, and export time. Regenerate
+  neural outputs if the reference bout table is regenerated or its indices change.
+- Averaging is separate from extraction: `N_BINS` is the number of equal temporal
+  windows (5 gives 100 ms, 2 gives 250 ms, 1 gives 500 ms). Sum counts in each window
+  and divide by its duration for spikes/s; retain the original-resolution counts.
