@@ -219,3 +219,19 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   typed NumPy arrays. Pass ordinary lists for coordinates, marker colors, text and
   customdata at the interactive plotting boundary. Section 10 exposed this issue;
   regression checks must replay `_js2py_traceDeltas`, not just camera callbacks.
+
+- Section 12 adds a destination-colored viewer using `color_by="destination"`.
+  Colors use saved `final_position` (observed movement endpoint), constant across
+  each bout's windows. Unfinished bouts with missing endpoints are shown in gray.
+  The fixed positional scale matches the starting-position view; no refitting.
+
+- Section 13 (`make_start_end_position_browser`) compares start and final position
+  per session, one point per completed bout, split tracking/playback. It displays
+  identity lines, Pearson r, median absolute net displacement and empirical CDFs
+  of |end-start|. Missing endpoints are excluded and counted. Use position units
+  without assuming cm; net displacement can be small after a return movement.
+
+- Section 14 displays destination-colored PCA with `filter_displacement=True`: an
+  adjustable minimum |final-initial| cutoff, initially 2 position units. Retain >=
+  cutoff, exclude missing endpoints, and filter all windows of each bout together.
+  This hides points without refitting; full-session axis ranges stay fixed.

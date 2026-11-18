@@ -388,19 +388,22 @@ def _link_pca_cameras(figure, scene_names=("scene", "scene2")):
 
 
 def make_interactive_pca_browser(
-    pca_cache, *, color_by="position", width=1400, filter_position=False, midpoint=14.0
+    pca_cache, *, color_by="position", width=1400, filter_position=False, midpoint=14.0,
+    filter_displacement=False, min_displacement=2.0
 ):
     """Browse saved tracking/playback PCAs with one independent session slider.
 
-    color_by selects starting-position or direction colors; all points are dots.
+    color_by selects starting-position, destination, or direction colors; all points are dots.
     The two panels' cameras are linked within this browser only. Creating two
     browsers gives independent session and camera controls without refitting.
     filter_position adds an all/left/right starting-position selector. Left is
     strictly below midpoint; right includes midpoint. Full-session axis ranges
     stay fixed when filtering, including when no points match.
+    filter_displacement adds a minimum |final-initial| slider and excludes bouts
+    with unknown endpoints. This filters saved coordinates without refitting.
     """
-    if color_by not in ("position", "direction"):
-        raise ValueError("color_by must be 'position' or 'direction'.")
+    if color_by not in ("position", "direction", "destination"):
+        raise ValueError("color_by must be 'position', 'destination', or 'direction'.")
     # Use plain lists for widget data: NumPy typed-array acknowledgements can fail in Plotly.
     import ipywidgets as widgets
     import plotly.graph_objects as go
@@ -420,7 +423,15 @@ def make_interactive_pca_browser(
         options=[("All", "all"), (f"Left (< {midpoint:g})", "left"), (f"Right (>= {midpoint:g})", "right")],
         description="Start:",
     ) if filter_position else None
-    encoding = "Starting position" if color_by == "position" else "Direction"
+    displacement_filter = widgets.FloatSlider(
+        value=min_displacement, min=0,
+        max=max(float(np.ceil(pca_cache["position_limits"][1] - pca_cache["position_limits"][0])), min_displacement),
+        step=0.5, description="Min. |end-start|", readout_format=".1f",
+        continuous_update=False, style={"description_width": "initial"},
+        layout=widgets.Layout(width="95%"),
+    ) if filter_displacement else None
+    position_column = "final_position" if color_by == "destination" else "initial_position"
+    encoding = {"position": "Starting position", "destination": "Destination position", "direction": "Direction"}[color_by]
     panels = ((0, "Tracking", encoding), (1, "Playback", encoding))
     figure = go.FigureWidget(make_subplots(
         rows=1, cols=2, specs=[[{"type": "scene"}, {"type": "scene"}]],
@@ -432,7 +443,10 @@ def make_interactive_pca_browser(
     panel_traces = []
     for panel, (_, name, encoding) in enumerate(panels):
         traces = []
-        groups = ((None, "Starting position", None),) if encoding == "Starting position" else directions
+        if color_by == "destination":
+            groups = ((None, encoding, None), ("missing", "Unknown destination", "#999999"))
+        else:
+            groups = ((None, encoding, None),) if color_by == "position" else directions
         for direction, label, color in groups:
             marker = {"symbol": "circle", "size": 4, "opacity": 0.7}
             marker.update({"coloraxis": "coloraxis"} if color is None else {"color": color})
@@ -441,7 +455,7 @@ def make_interactive_pca_browser(
                 marker=marker, showlegend=False,
                 hovertemplate=(
                     "Bout %{customdata[0]:.0f}<br>Bin start: %{customdata[1]:.3f} s"
-                    "<br>Starting position: %{customdata[2]:.2f}<br>Direction: %{customdata[3]}"
+                    "<br>Starting position: %{customdata[2]:.2f}<br>Destination: %{customdata[4]:.2f}<br>Direction: %{customdata[3]}"
                     "<br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<br>PC3: %{z:.2f}<extra></extra>"
                 ),
             ), row=panel // 2 + 1, col=panel % 2 + 1)
@@ -454,7 +468,7 @@ def make_interactive_pca_browser(
         coloraxis={
             "colorscale": "Viridis", "cmin": pca_cache["position_limits"][0],
             "cmax": pca_cache["position_limits"][1],
-            "colorbar": {"title": "Starting position", "len": 0.85, "y": 0.5, "thickness": 15},
+            "colorbar": {"title": encoding, "len": 0.85, "y": 0.5, "thickness": 15},
         },
         legend={"orientation": "h", "y": -0.02}, uirevision="preserve-pca-camera",
     )
@@ -481,8 +495,11 @@ def make_interactive_pca_browser(
                         rows = rows.loc[rows["initial_position"] < midpoint]
                     elif position_filter.value == "right":
                         rows = rows.loc[rows["initial_position"] >= midpoint]
+                if available and displacement_filter is not None:
+                    displacement = (rows["final_position"] - rows["initial_position"]).abs()
+                    rows = rows.loc[displacement >= displacement_filter.value]
                 figure.layout.annotations[panel].text = (
-                    f"{name}: {encoding.lower()} ({len(rows)} observations)" if available
+                    f"{name}: {encoding.lower()} ({len(rows)} / {len(fit['results'])} observations)" if available
                     else f"{name}: fewer than three components available"
                 )
                 scene = figure.layout[scene_names[panel]]
@@ -491,7 +508,7 @@ def make_interactive_pca_browser(
                         f"PC{pc + 1} ({fit['model'].explained_variance_ratio_[pc]:.1%})"
                         if available else f"PC{pc + 1}"
                     )
-                    if available and (position_filter is not None or tracking_basis):
+                    if available and (position_filter is not None or displacement_filter is not None or tracking_basis):
                         values = (
                             pd.concat([entry["results"][f"PC{pc + 1}"] for entry in fits.values()])
                             if tracking_basis else fit["results"][f"PC{pc + 1}"]
@@ -503,7 +520,10 @@ def make_interactive_pca_browser(
                         trace.x, trace.y, trace.z, trace.customdata = [], [], [], []
                         trace.showlegend = False
                         continue
-                    if direction is None:
+                    if color_by == "destination":
+                        known = rows["final_position"].notna()
+                        subset = rows.loc[known if direction is None else ~known]
+                    elif direction is None:
                         subset = rows
                     elif direction == 0:
                         subset = rows.loc[~rows["initial_direction"].isin((-1, 1))]
@@ -511,12 +531,13 @@ def make_interactive_pca_browser(
                         subset = rows.loc[rows["initial_direction"] == direction]
                     trace.x, trace.y, trace.z = (subset[pc].tolist() for pc in ("PC1", "PC2", "PC3"))
                     if direction is None:
-                        trace.marker.color = subset["initial_position"].tolist()
-                    customdata = np.empty((len(subset), 4), dtype=object)
+                        trace.marker.color = subset[position_column].tolist()
+                    customdata = np.empty((len(subset), 5), dtype=object)
                     customdata[:, 0] = subset.index.get_level_values("bout_id")
                     customdata[:, 1] = subset.index.get_level_values("bin_start_s")
                     customdata[:, 2] = subset["initial_position"]
                     customdata[:, 3] = subset["initial_direction"].map({-1: "Left", 1: "Right"}).fillna("Zero / unknown")
+                    customdata[:, 4] = subset["final_position"].astype(object).where(subset["final_position"].notna(), None)
                     trace.customdata = customdata.tolist()
                     trace.showlegend = direction is not None and len(subset) > 0 and label not in shown_legend_labels
                     if trace.showlegend:
@@ -525,8 +546,15 @@ def make_interactive_pca_browser(
     slider.observe(lambda change: show_session(change["new"]), names="value")
     if position_filter is not None:
         position_filter.observe(lambda change: show_session(slider.value), names="value")
+    if displacement_filter is not None:
+        displacement_filter.observe(lambda change: show_session(slider.value), names="value")
     show_session(slider.value)
-    controls = [slider, position_filter, figure] if position_filter is not None else [slider, figure]
+    controls = [slider]
+    if position_filter is not None:
+        controls.append(position_filter)
+    if displacement_filter is not None:
+        controls.append(displacement_filter)
+    controls.append(figure)
     return widgets.VBox(controls, layout=widgets.Layout(width="100%", overflow="auto"))
 
 
@@ -675,3 +703,85 @@ def make_bout_pca_browser(pca_cache, *, width=1400):
         [session_slider, bout_selector, figure],
         layout=widgets.Layout(width="100%", overflow="auto"),
     )
+
+
+def make_start_end_position_browser(movement_bouts, session_info, *, width=1500):
+    """Compare bout endpoints, counting each reference-table row once.
+
+    Per session, show tracking/playback start-versus-end plots and empirical
+    cumulative distributions of absolute net displacement. Unknown endpoints
+    are excluded, and the count is displayed. No PCA scores are involved.
+    """
+    import ipywidgets as widgets
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    slider = widgets.SelectionSlider(
+        options=[
+            (f"idx={idx} | {info['animal']} hs{info['headstage']} | session {info['session']}", idx)
+            for idx, info in session_info.iterrows()
+        ],
+        description="Session", continuous_update=False,
+        layout=widgets.Layout(width="95%"),
+    )
+    positions = movement_bouts[["initial_position", "final_position"]]
+    lower, upper = float(positions.min().min()), float(positions.max().max())
+    figure = go.FigureWidget(make_subplots(
+        rows=1, cols=3, subplot_titles=["Tracking", "Playback", "How close is the endpoint?"],
+        horizontal_spacing=0.08,
+    ))
+    for col, (name, color) in enumerate((("Tracking", "red"), ("Playback", "black")), 1):
+        figure.add_trace(go.Scattergl(
+            x=[], y=[], mode="markers", name=name, showlegend=False,
+            marker={"color": color, "size": 6, "opacity": 0.4},
+            hovertemplate="Bout %{customdata}<br>Start: %{x:.3f}<br>End: %{y:.3f}<extra></extra>",
+        ), row=1, col=col)
+        figure.add_shape(
+            type="line", x0=lower, y0=lower, x1=upper, y1=upper,
+            line={"color": "gray", "dash": "dash", "width": 1}, row=1, col=col,
+        )
+        figure.update_xaxes(title_text="Starting position", range=[lower, upper], row=1, col=col)
+        figure.update_yaxes(
+            title_text="Final position", range=[lower, upper],
+            scaleanchor="x" if col == 1 else "x2", scaleratio=1, row=1, col=col,
+        )
+    for name, color in (("Tracking", "red"), ("Playback", "black")):
+        figure.add_trace(go.Scatter(
+            x=[], y=[], mode="lines", name=name,
+            line={"color": color, "shape": "hv"},
+            hovertemplate="Displacement <= %{x:.3f}<br>Fraction of bouts: %{y:.1%}<extra>%{fullData.name}</extra>",
+        ), row=1, col=3)
+    figure.update_xaxes(title_text="Absolute net displacement |end - start|", range=[0, upper - lower], row=1, col=3)
+    figure.update_yaxes(title_text="Fraction of bouts at or below this distance", range=[0, 1], row=1, col=3)
+    figure.update_layout(
+        template="plotly_white", width=width, height=540,
+        margin={"l": 50, "r": 20, "t": 120, "b": 75},
+        legend={"orientation": "h", "y": -0.25},
+    )
+
+    def show_session(idx):
+        info = session_info.loc[idx]
+        bouts = movement_bouts.loc[movement_bouts["idx"] == idx]
+        complete = bouts.dropna(subset=["initial_position", "final_position"])
+        with figure.batch_update():
+            figure.layout.title.text = (
+                f"idx={idx}: {info['animal']} hs{info['headstage']}, session {info['session']}"
+                f"<br><sup>One point per bout. Dashed line: end = start. Unknown endpoints excluded: {len(bouts) - len(complete)}.</sup>"
+            )
+            for panel, (condition, name) in enumerate(((0, "Tracking"), (1, "Playback"))):
+                rows = complete.loc[complete["condition"] == condition]
+                displacement = (rows["final_position"] - rows["initial_position"]).abs()
+                r = rows["initial_position"].corr(rows["final_position"]) if len(rows) > 1 else np.nan
+                points = figure.data[panel]
+                points.x, points.y = rows["initial_position"].tolist(), rows["final_position"].tolist()
+                points.customdata = rows.index.tolist()
+                figure.layout.annotations[panel].text = (
+                    f"{name}: {len(rows)} bouts<br>r = {r:.2f}; median |end-start| = {displacement.median():.2f}"
+                )
+                cdf = figure.data[panel + 2]
+                cdf.x = [0.0] + np.sort(displacement.to_numpy()).tolist()
+                cdf.y = [0.0] + (np.arange(1, len(rows) + 1) / len(rows)).tolist() if len(rows) else [0.0]
+
+    slider.observe(lambda change: show_session(change["new"]), names="value")
+    show_session(slider.value)
+    return widgets.VBox([slider, figure], layout=widgets.Layout(width="100%", overflow="auto"))
