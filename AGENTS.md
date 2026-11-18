@@ -171,7 +171,23 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   by neurons, in spikes/s) and `pca_labels` (original bout metadata plus `bin_number`
   and `bin_end_s`). Both use `(bout_id, bin_start_s)` as their index. Rows follow
   each bout's windows in chronological order. No extra intermediate files are saved.
-- The notebook fits PCA separately, using both conditions in a shared space within
-  the selected session. The initial implementation mean-centers firing rates with
-  scikit-learn PCA, without variance standardization or whitening, and retains all
-  components for inspecting explained variance. `pca_results` joins scores to labels.
+- `fit_pca_by_condition()` fits separate PCAs for tracking (0) and playback (1).
+  Each centers its own firing rates, without variance standardization or whitening,
+  and retains all components. Each condition entry holds `model` and `results`
+  (coordinates joined to bout/window labels). Conditions with fewer than two
+  observations are omitted. `plot_pca_session()` only draws these saved results.
+- Notebook section 7 computes all sessions and saves models and labeled results
+  together in `data/derived/premotor_activity/pca/pca_{N_BINS}bins.pkl` relative to
+  the workspace root. Load with `pd.read_pickle()`. This dictionary contains
+  `sessions[idx][condition]`, `settings`, `session_info`, `skipped_sessions`, and
+  global `position_limits`. The current 5-bin file has 160 models for 80 sessions.
+- To browse saved PCAs, run notebook sections 1 and 8, skipping extraction and
+  fitting. `make_interactive_pca_browser()` combines an ipywidgets SelectionSlider
+  (`continuous_update=False`) with one Plotly FigureWidget. Dependencies include
+  plotly and anywidget, managed by uv. Drag/scroll rotates/zooms the two PC1/PC2/PC3
+  panels; bidirectional camera callbacks synchronize views, with re-entry guards.
+  Session changes update the same six traces and preserve the camera. No callback
+  performs preparation, fitting, or Matplotlib rendering. Cross/circle markers show
+  initial left/right direction; position colors use fixed limits across all sessions.
+  Hover labels retain bout IDs, window start times, and starting positions. Section 6
+  remains a static Matplotlib preview; section 8 is the interactive viewer.

@@ -243,3 +243,211 @@ def prepare_pca_input(
     pca_labels["bin_number"] = np.tile(np.arange(n_bins), n_bouts)
     pca_labels["bin_end_s"] = np.tile(bin_edges_s[1:], n_bouts)
     return pca_input, pca_labels
+
+
+def fit_pca_by_condition(pca_input, pca_labels):
+    """Fit independent tracking/playback PCAs, retaining models and labeled scores.
+
+    Return a dictionary keyed by condition (0/1). Conditions with fewer than
+    two observations are omitted. Each model retains all components, centers
+    its own condition's rates, and does not standardize or whiten them.
+    """
+    from sklearn.decomposition import PCA
+
+    fits = {}
+    for condition in (0, 1):
+        condition_input = pca_input.loc[pca_labels["condition"] == condition]
+        if len(condition_input) < 2:
+            continue
+        model = PCA(svd_solver="full")
+        scores = pd.DataFrame(
+            model.fit_transform(condition_input),
+            index=condition_input.index,
+            columns=[f"PC{i + 1}" for i in range(model.n_components_)],
+        )
+        fits[condition] = {
+            "model": model,
+            "results": pca_labels.loc[condition_input.index].join(scores, validate="one_to_one"),
+        }
+    return fits
+
+
+def plot_pca_session(fits, *, title, position_limits=None):
+    """Draw saved PC1/PC2/PC3 scores without preparing data or fitting models.
+
+    Use shared position_limits across sessions for a consistent color scale.
+    Return the Matplotlib figure and axes; the caller displays/closes them.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import Normalize
+    from matplotlib.lines import Line2D
+
+    # Use one starting-position color scale across the two independent PCA panels.
+    positions = pd.concat([fit["results"]["initial_position"] for fit in fits.values()])
+    if position_limits is None:
+        position_limits = (positions.min(), positions.max())
+    position_norm = Normalize(*position_limits)
+    position_cmap = "viridis"
+    directions = ((-1, "x", "Left"), (1, "o", "Right"), (0, "s", "Zero / unknown direction"))
+
+    fig_pca, axes_pca = plt.subplots(
+        1, 2, figsize=(14, 6), layout="constrained",
+        subplot_kw={"projection": "3d"},
+    )
+    for ax, (condition, name) in zip(axes_pca, ((0, "Tracking"), (1, "Playback"))):
+        if condition not in fits or fits[condition]["model"].n_components_ < 3:
+            ax.text2D(0.5, 0.5, "Fewer than three components available", ha="center", transform=ax.transAxes)
+            ax.set_title(name)
+            continue
+
+        model = fits[condition]["model"]
+        rows = fits[condition]["results"]
+        legend_handles = []
+        for direction, marker, label in directions:
+            mask = rows["initial_direction"] == direction
+            if direction == 0:
+                mask = mask | rows["initial_direction"].isna()
+            subset = rows.loc[mask]
+            if subset.empty:
+                continue
+            ax.scatter(
+                subset["PC1"], subset["PC2"], subset["PC3"],
+                c=subset["initial_position"], cmap=position_cmap, norm=position_norm,
+                marker=marker, s=25, alpha=0.7, linewidths=0.8, depthshade=False,
+            )
+            legend_handles.append(Line2D(
+                [], [], color="black", marker=marker, linestyle="none",
+                markersize=6, label=label,
+            ))
+
+        ax.set(
+            xlabel=f"PC1 ({model.explained_variance_ratio_[0]:.1%} variance)",
+            ylabel=f"PC2 ({model.explained_variance_ratio_[1]:.1%} variance)",
+            zlabel=f"PC3 ({model.explained_variance_ratio_[2]:.1%} variance)",
+            title=f"{name}: separate PCA ({len(rows)} observations)",
+        )
+        ax.set_box_aspect(np.maximum(np.ptp(rows[["PC1", "PC2", "PC3"]].to_numpy(), axis=0), 1e-9))
+        ax.view_init(elev=22, azim=-60)
+        ax.legend(handles=legend_handles, frameon=False)
+
+    fig_pca.colorbar(
+        plt.cm.ScalarMappable(norm=position_norm, cmap=position_cmap),
+        ax=axes_pca, label="Starting position", shrink=0.85,
+    )
+    fig_pca.suptitle(title + " | Each point = one bout at one time window")
+    return fig_pca, axes_pca
+
+
+def make_interactive_pca_browser(pca_cache):
+    """Build a saved-session slider and two 3D panels with linked cameras.
+
+    Updates the same FigureWidget in place. No PCA fitting, data preparation,
+    file loading, or Matplotlib figure creation occurs in slider callbacks.
+    """
+    import ipywidgets as widgets
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    session_info = pca_cache["session_info"]
+    slider = widgets.SelectionSlider(
+        options=[
+            (f"idx={idx} | {info['animal']} hs{info['headstage']} | session {info['session']}", idx)
+            for idx, info in session_info.iterrows()
+        ],
+        description="Session", continuous_update=False,
+        layout=widgets.Layout(width="95%"),
+    )
+    figure = go.FigureWidget(make_subplots(
+        rows=1, cols=2, specs=[[{"type": "scene"}, {"type": "scene"}]],
+        subplot_titles=["Tracking", "Playback"], horizontal_spacing=0.04,
+    ))
+    # FigureWidget sends this configuration to its notebook front end.
+    figure._config = {"scrollZoom": True, "displaylogo": False}
+    directions = ((-1, "x", "Left"), (1, "circle", "Right"), (0, "square", "Zero / unknown direction"))
+    for col in (1, 2):
+        for direction, symbol, label in directions:
+            figure.add_trace(go.Scatter3d(
+                x=[], y=[], z=[], mode="markers", name=label, legendgroup=label,
+                marker={"symbol": symbol, "size": 4, "opacity": 0.7, "coloraxis": "coloraxis"},
+                hovertemplate=(
+                    "Bout %{customdata[0]:.0f}<br>Bin start: %{customdata[1]:.3f} s"
+                    "<br>Starting position: %{customdata[2]:.2f}"
+                    "<br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<br>PC3: %{z:.2f}<extra>%{fullData.name}</extra>"
+                ),
+            ), row=1, col=col)
+    figure.update_layout(
+        template="plotly_white", height=650,
+        margin={"l": 0, "r": 90, "t": 90, "b": 0},
+        coloraxis={
+            "colorscale": "Viridis", "cmin": pca_cache["position_limits"][0],
+            "cmax": pca_cache["position_limits"][1],
+            "colorbar": {"title": "Starting position", "len": 0.8},
+        },
+        legend={"orientation": "h", "y": -0.02}, uirevision="preserve-pca-camera",
+    )
+    figure.update_scenes(aspectmode="data", camera={"eye": {"x": 1.5, "y": 1.5, "z": 1.2}})
+
+    # Equality and re-entry guards prevent camera updates bouncing indefinitely.
+    syncing = False
+
+    def sync_camera(target_name, camera):
+        nonlocal syncing
+        target = figure.layout[target_name]
+        camera_data = camera.to_plotly_json()
+        if syncing or target.camera.to_plotly_json() == camera_data:
+            return
+        syncing = True
+        try:
+            target.camera = camera_data
+        finally:
+            syncing = False
+
+    figure.layout.scene.on_change(lambda scene, camera: sync_camera("scene2", camera), "camera")
+    figure.layout.scene2.on_change(lambda scene, camera: sync_camera("scene", camera), "camera")
+
+    def show_session(idx):
+        info = session_info.loc[idx]
+        fits = pca_cache["sessions"][idx]
+        shown_legend_labels = set()
+        with figure.batch_update():
+            figure.layout.title.text = (
+                f"idx={idx}: {info['animal']} hs{info['headstage']}, session {info['session']}"
+                "<br><sup>Drag to rotate; scroll to zoom. Both camera views are linked.</sup>"
+            )
+            for panel, (condition, name) in enumerate(((0, "Tracking"), (1, "Playback"))):
+                fit = fits.get(condition)
+                available = fit is not None and fit["model"].n_components_ >= 3
+                rows = fit["results"] if available else None
+                figure.layout.annotations[panel].text = (
+                    f"{name}: separate PCA ({len(rows)} observations)" if available
+                    else f"{name}: fewer than three components available"
+                )
+                scene = figure.layout["scene" if panel == 0 else "scene2"]
+                for axis, pc in zip((scene.xaxis, scene.yaxis, scene.zaxis), range(3)):
+                    axis.title.text = (
+                        f"PC{pc + 1} ({fit['model'].explained_variance_ratio_[pc]:.1%})"
+                        if available else f"PC{pc + 1}"
+                    )
+                for offset, (direction, symbol, label) in enumerate(directions):
+                    trace = figure.data[panel * 3 + offset]
+                    if available:
+                        mask = rows["initial_direction"] == direction
+                        if direction == 0:
+                            mask = mask | rows["initial_direction"].isna()
+                        subset = rows.loc[mask]
+                        trace.x, trace.y, trace.z = (subset[pc].to_numpy() for pc in ("PC1", "PC2", "PC3"))
+                        trace.marker.color = subset["initial_position"].to_numpy()
+                        trace.customdata = np.column_stack((
+                            subset.index.get_level_values("bout_id"),
+                            subset.index.get_level_values("bin_start_s"), subset["initial_position"],
+                        ))
+                        trace.showlegend = len(subset) > 0 and label not in shown_legend_labels
+                        if len(subset):
+                            shown_legend_labels.add(label)
+                    else:
+                        trace.x, trace.y, trace.z = [], [], []
+                        trace.marker.color, trace.customdata, trace.showlegend = [], [], False
+
+    slider.observe(lambda change: show_session(change["new"]), names="value")
+    show_session(slider.value)
+    return widgets.VBox([slider, figure])
