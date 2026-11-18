@@ -203,7 +203,7 @@ def prepare_pca_input(
     original bout metadata, bin_number, bin_end_s). Both share the unique index
     (bout_id, bin_start_s), ordered by bout then increasing window time.
     Bout-level labels are repeated, not recomputed within each window.
-    This function performs no file I/O, scaling, or PCA fitting.
+    This function performs no file I/O, standardization, or PCA fitting.
     """
     if not isinstance(n_bins, (int, np.integer)) or n_bins <= 0:
         raise ValueError("n_bins must be a positive integer.")

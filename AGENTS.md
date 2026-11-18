@@ -166,3 +166,12 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
 - Averaging is separate from extraction: `N_BINS` is the number of equal temporal
   windows (5 gives 100 ms, 2 gives 250 ms, 1 gives 500 ms). Sum counts in each window
   and divide by its duration for spikes/s; retain the original-resolution counts.
+- `prepare_pca_input()` in `movement_bouts/utils.py` selects one session, averages
+  its counts, and returns two aligned in-memory DataFrames: `pca_input` (observations
+  by neurons, in spikes/s) and `pca_labels` (original bout metadata plus `bin_number`
+  and `bin_end_s`). Both use `(bout_id, bin_start_s)` as their index. Rows follow
+  each bout's windows in chronological order. No extra intermediate files are saved.
+- The notebook fits PCA separately, using both conditions in a shared space within
+  the selected session. The initial implementation mean-centers firing rates with
+  scikit-learn PCA, without variance standardization or whitening, and retains all
+  components for inspecting explained variance. `pca_results` joins scores to labels.
