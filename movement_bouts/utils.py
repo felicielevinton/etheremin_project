@@ -272,6 +272,32 @@ def fit_pca_by_condition(pca_input, pca_labels):
     return fits
 
 
+def project_onto_tracking_pca(pca_input, pca_labels, tracking_model):
+    """Transform both conditions with a saved tracking PCA, without refitting.
+
+    transform() uses the tracking mean for both conditions, preserving any
+    playback mean offset. Neuron columns follow the tracking model's order.
+    Return the same condition/model/results structure as fit_pca_by_condition().
+    """
+    projections = {}
+    for condition in (0, 1):
+        observations = pca_input.loc[
+            pca_labels["condition"] == condition, tracking_model.feature_names_in_
+        ]
+        if observations.empty:
+            continue
+        scores = pd.DataFrame(
+            tracking_model.transform(observations),
+            index=observations.index,
+            columns=[f"PC{i + 1}" for i in range(tracking_model.n_components_)],
+        )
+        projections[condition] = {
+            "model": tracking_model,
+            "results": pca_labels.loc[observations.index].join(scores, validate="one_to_one"),
+        }
+    return projections
+
+
 def plot_pca_session(fits, *, title, position_limits=None):
     """Draw saved PC1/PC2/PC3 scores without preparing data or fitting models.
 
@@ -338,6 +364,29 @@ def plot_pca_session(fits, *, title, position_limits=None):
     return fig_pca, axes_pca
 
 
+def _link_pca_cameras(figure, scene_names=("scene", "scene2")):
+    """Synchronize camera events without recursive updates."""
+    syncing = False
+
+    def sync_camera(source, camera):
+        nonlocal syncing
+        if syncing:
+            return
+        camera_data = camera.to_plotly_json()
+        syncing = True
+        try:
+            with figure.batch_update():
+                for scene_name in scene_names:
+                    target = figure.layout[scene_name]
+                    if target.camera.to_plotly_json() != camera_data:
+                        target.camera = camera_data
+        finally:
+            syncing = False
+
+    for scene_name in scene_names:
+        figure.layout[scene_name].on_change(sync_camera, "camera")
+
+
 def make_interactive_pca_browser(
     pca_cache, *, color_by="position", width=1400, filter_position=False, midpoint=14.0
 ):
@@ -352,11 +401,13 @@ def make_interactive_pca_browser(
     """
     if color_by not in ("position", "direction"):
         raise ValueError("color_by must be 'position' or 'direction'.")
+    # Use plain lists for widget data: NumPy typed-array acknowledgements can fail in Plotly.
     import ipywidgets as widgets
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
     session_info = pca_cache["session_info"]
+    tracking_basis = pca_cache.get("projection_basis") == "tracking"
     slider = widgets.SelectionSlider(
         options=[
             (f"idx={idx} | {info['animal']} hs{info['headstage']} | session {info['session']}", idx)
@@ -409,25 +460,7 @@ def make_interactive_pca_browser(
     )
     figure.update_scenes(aspectmode="data", camera={"eye": {"x": 1.5, "y": 1.5, "z": 1.2}})
     scene_names = ("scene", "scene2")
-    syncing = False
-
-    def sync_camera(source, camera):
-        nonlocal syncing
-        if syncing:
-            return
-        camera_data = camera.to_plotly_json()
-        syncing = True
-        try:
-            with figure.batch_update():
-                for scene_name in scene_names:
-                    target = figure.layout[scene_name]
-                    if target.camera.to_plotly_json() != camera_data:
-                        target.camera = camera_data
-        finally:
-            syncing = False
-
-    for scene_name in scene_names:
-        figure.layout[scene_name].on_change(sync_camera, "camera")
+    _link_pca_cameras(figure, scene_names)
 
     def show_session(idx):
         info = session_info.loc[idx]
@@ -436,7 +469,8 @@ def make_interactive_pca_browser(
         with figure.batch_update():
             figure.layout.title.text = (
                 f"idx={idx}: {info['animal']} hs{info['headstage']}, session {info['session']}"
-                "<br><sup>Drag to rotate; scroll to zoom. The two camera views are linked.</sup>"
+                + ("<br><sup>Tracking PCA axes for both conditions; percentages describe tracking variance.</sup>"
+                 if tracking_basis else "<br><sup>Drag to rotate; scroll to zoom. The two camera views are linked.</sup>")
             )
             for panel, (condition, name, encoding) in enumerate(panels):
                 fit = fits.get(condition)
@@ -457,8 +491,11 @@ def make_interactive_pca_browser(
                         f"PC{pc + 1} ({fit['model'].explained_variance_ratio_[pc]:.1%})"
                         if available else f"PC{pc + 1}"
                     )
-                    if available and position_filter is not None:
-                        values = fit["results"][f"PC{pc + 1}"]
+                    if available and (position_filter is not None or tracking_basis):
+                        values = (
+                            pd.concat([entry["results"][f"PC{pc + 1}"] for entry in fits.values()])
+                            if tracking_basis else fit["results"][f"PC{pc + 1}"]
+                        )
                         padding = max((values.max() - values.min()) * 0.05, 1e-6)
                         axis.range = [values.min() - padding, values.max() + padding]
                 for trace, direction, label in panel_traces[panel]:
@@ -472,15 +509,15 @@ def make_interactive_pca_browser(
                         subset = rows.loc[~rows["initial_direction"].isin((-1, 1))]
                     else:
                         subset = rows.loc[rows["initial_direction"] == direction]
-                    trace.x, trace.y, trace.z = (subset[pc].to_numpy() for pc in ("PC1", "PC2", "PC3"))
+                    trace.x, trace.y, trace.z = (subset[pc].tolist() for pc in ("PC1", "PC2", "PC3"))
                     if direction is None:
-                        trace.marker.color = subset["initial_position"].to_numpy()
+                        trace.marker.color = subset["initial_position"].tolist()
                     customdata = np.empty((len(subset), 4), dtype=object)
                     customdata[:, 0] = subset.index.get_level_values("bout_id")
                     customdata[:, 1] = subset.index.get_level_values("bin_start_s")
                     customdata[:, 2] = subset["initial_position"]
                     customdata[:, 3] = subset["initial_direction"].map({-1: "Left", 1: "Right"}).fillna("Zero / unknown")
-                    trace.customdata = customdata
+                    trace.customdata = customdata.tolist()
                     trace.showlegend = direction is not None and len(subset) > 0 and label not in shown_legend_labels
                     if trace.showlegend:
                         shown_legend_labels.add(label)
@@ -491,3 +528,150 @@ def make_interactive_pca_browser(
     show_session(slider.value)
     controls = [slider, position_filter, figure] if position_filter is not None else [slider, figure]
     return widgets.VBox(controls, layout=widgets.Layout(width="100%", overflow="auto"))
+
+
+def make_bout_pca_browser(pca_cache, *, width=1400):
+    """Highlight one bout's chronological trajectory among saved PCA scores.
+
+    A bout belongs to one condition, so it is highlighted only in that panel.
+    Other observations are faint and colored by starting position. Session and bout controls update fixed traces;
+    linked cameras and full-session axis ranges persist across bout selections.
+    """
+    # Use plain lists for widget data: NumPy typed-array acknowledgements can fail in Plotly.
+    import ipywidgets as widgets
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    session_info = pca_cache["session_info"]
+    session_slider = widgets.SelectionSlider(
+        options=[
+            (f"idx={idx} | {info['animal']} hs{info['headstage']} | session {info['session']}", idx)
+            for idx, info in session_info.iterrows()
+        ],
+        description="Session", continuous_update=False,
+        layout=widgets.Layout(width="95%"),
+    )
+    bout_selector = widgets.SelectionSlider(
+        options=[("Loading bouts", -1)], description="Bout", continuous_update=False,
+        layout=widgets.Layout(width="95%"),
+    )
+    figure = go.FigureWidget(make_subplots(
+        rows=1, cols=2, specs=[[{"type": "scene"}, {"type": "scene"}]],
+        subplot_titles=["Tracking", "Playback"], horizontal_spacing=0.02,
+    ))
+    figure._config = {"scrollZoom": True, "displaylogo": False}
+    for col in (1, 2):
+        figure.add_trace(go.Scatter3d(
+            x=[], y=[], z=[], mode="markers", showlegend=False,
+            marker={"size": 3, "coloraxis": "coloraxis2", "opacity": 0.22},
+            hoverinfo="skip",
+        ), row=1, col=col)
+        figure.add_trace(go.Scatter3d(
+            x=[], y=[], z=[], mode="lines+markers+text", showlegend=False,
+            line={"color": "#52677c", "width": 5},
+            marker={"size": 8, "opacity": 1, "coloraxis": "coloraxis"},
+            textposition="top center", textfont={"size": 14},
+            hovertemplate=(
+                "Bout %{customdata[0]:.0f}<br>Bin %{text}: %{customdata[1]:.3f} to %{customdata[2]:.3f} s"
+                "<br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<br>PC3: %{z:.2f}<extra></extra>"
+            ),
+        ), row=1, col=col)
+    figure.update_layout(
+        template="plotly_white", width=width, height=750,
+        margin={"l": 0, "r": 75, "t": 85, "b": 95},
+        coloraxis={
+            "colorscale": [[0, "#7db5e8"], [1, "#08306b"]],
+            "colorbar": {"title": "Bin start (s)", "len": 0.85, "thickness": 15},
+        },
+        coloraxis2={
+            "colorscale": "Viridis", "cmin": pca_cache["position_limits"][0],
+            "cmax": pca_cache["position_limits"][1],
+            "colorbar": {
+                "title": "Starting position", "orientation": "h", "len": 0.7,
+                "x": 0.5, "xanchor": "center", "y": -0.08, "yanchor": "top", "thickness": 12,
+            },
+        },
+        uirevision="preserve-bout-camera",
+    )
+    figure.update_scenes(aspectmode="data", camera={"eye": {"x": 1.5, "y": 1.5, "z": 1.2}})
+    _link_pca_cameras(figure)
+    scene_names = ("scene", "scene2")
+    current_fits = {}
+    updating_options = False
+
+    def highlight_bout():
+        bout_id = bout_selector.value
+        with figure.batch_update():
+            for panel, (condition, name) in enumerate(((0, "Tracking"), (1, "Playback"))):
+                fit = current_fits.get(condition)
+                available = fit is not None and fit["model"].n_components_ >= 3
+                background, highlighted = figure.data[panel * 2:panel * 2 + 2]
+                if not available:
+                    background.x, background.y, background.z, background.marker.color = [], [], [], []
+                    highlighted.x, highlighted.y, highlighted.z = [], [], []
+                    highlighted.text, highlighted.customdata, highlighted.marker.color = [], [], []
+                    figure.layout.annotations[panel].text = f"{name}: fewer than three components available"
+                    continue
+                rows = fit["results"]
+                selected = rows.loc[rows.index.get_level_values("bout_id") == bout_id].sort_values("bin_number")
+                other = rows.loc[rows.index.get_level_values("bout_id") != bout_id]
+                for trace, subset in ((background, other), (highlighted, selected)):
+                    trace.x, trace.y, trace.z = (subset[pc].tolist() for pc in ("PC1", "PC2", "PC3"))
+                background.marker.color = other["initial_position"].tolist()
+                highlighted.text = selected["bin_number"].astype(str).tolist()
+                highlighted.marker.color = selected.index.get_level_values("bin_start_s").tolist()
+                highlighted.customdata = np.column_stack((
+                    selected.index.get_level_values("bout_id"),
+                    selected.index.get_level_values("bin_start_s"), selected["bin_end_s"],
+                )).tolist()
+                figure.layout.annotations[panel].text = (
+                    f"{name}: bout {bout_id} ({len(selected)} windows)" if len(selected)
+                    else f"{name}: selected bout is in the other condition"
+                )
+
+    def show_session(idx):
+        nonlocal current_fits, updating_options
+        current_fits = pca_cache["sessions"][idx]
+        info = session_info.loc[idx]
+        bout_options = []
+        with figure.batch_update():
+            figure.layout.title.text = (
+                f"idx={idx}: {info['animal']} hs{info['headstage']}, session {info['session']}"
+                "<br><sup>Selected bout: light to dark, connected in time order; other bouts colored by starting position.</sup>"
+            )
+            for panel, (condition, name) in enumerate(((0, "Tracking"), (1, "Playback"))):
+                fit = current_fits.get(condition)
+                if fit is None or fit["model"].n_components_ < 3:
+                    continue
+                rows = fit["results"]
+                scene = figure.layout[scene_names[panel]]
+                for pc, axis in enumerate((scene.xaxis, scene.yaxis, scene.zaxis)):
+                    values = rows[f"PC{pc + 1}"]
+                    padding = max((values.max() - values.min()) * 0.05, 1e-6)
+                    axis.range = [values.min() - padding, values.max() + padding]
+                    axis.title.text = f"PC{pc + 1} ({fit['model'].explained_variance_ratio_[pc]:.1%})"
+                for bout_id in rows.index.get_level_values("bout_id").unique():
+                    bout_options.append((f"Bout {bout_id} | {name}", bout_id))
+                starts = rows.index.get_level_values("bin_start_s")
+                figure.layout.coloraxis.cmin = starts.min()
+                figure.layout.coloraxis.cmax = starts.max() if starts.max() > starts.min() else rows["bin_end_s"].max()
+            updating_options = True
+            try:
+                bout_selector.options = bout_options or [("No bouts available", -1)]
+                bout_selector.disabled = not bout_options
+                bout_selector.value = bout_options[0][1] if bout_options else -1
+            finally:
+                updating_options = False
+            highlight_bout()
+
+    def on_bout_change(change):
+        if not updating_options:
+            highlight_bout()
+
+    session_slider.observe(lambda change: show_session(change["new"]), names="value")
+    bout_selector.observe(on_bout_change, names="value")
+    show_session(session_slider.value)
+    return widgets.VBox(
+        [session_slider, bout_selector, figure],
+        layout=widgets.Layout(width="100%", overflow="auto"),
+    )

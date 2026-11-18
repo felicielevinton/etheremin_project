@@ -200,3 +200,22 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   reconstructed 0?28 scale and is adjustable. `filter_position=True` enables the
   selector. Filtering hides saved observations without refitting; full-session axis
   ranges and linked cameras are preserved, including for empty selections.
+
+- Section 10 adds `make_bout_pca_browser()`: an independent session slider and
+  bout slider (updates on release). One bout is highlighted in its own condition panel, with labeled
+  time bins, a light-to-dark time scale and chronological connecting line. Other
+  bouts retain faint starting-position colors (fixed Viridis scale); full-session axis ranges and linked cameras are preserved.
+  Shared camera synchronization lives in `_link_pca_cameras()`. No refitting occurs.
+
+- Section 11 projects playback onto each session's saved tracking PCA using
+  `project_onto_tracking_pca()`. Both conditions use tracking mean/loadings via
+  `transform()`; no refitting or playback recentering. Results are saved separately
+  in `pca/pca_tracking_projection_{N_BINS}bins.pkl` with `projection_basis="tracking"`.
+  The new position-colored viewer has matching axis limits and linked cameras;
+  percentages refer to tracking variance. Existing separate-PCAs caches are unchanged.
+
+- Plotly FigureWidget 7.1 can draw successfully but emit repeated ValueErrors in
+  `_remove_overlapping_props` when browser trace-default acknowledgements contain
+  typed NumPy arrays. Pass ordinary lists for coordinates, marker colors, text and
+  customdata at the interactive plotting boundary. Section 10 exposed this issue;
+  regression checks must replay `_js2py_traceDeltas`, not just camera callbacks.
