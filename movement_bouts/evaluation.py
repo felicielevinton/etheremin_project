@@ -267,3 +267,103 @@ def plot_paired_regressions(summary, *, score="r2_adjusted"):
     axes[1].legend(frameon=False)
     fig.tight_layout()
     return fig, axes, paired
+
+
+def summarize_starting_position_bias(regressions, *, midpoint=14.0):
+    """Add bout-level position distribution measures to starting-position scores.
+
+    Use observed targets in each fit's prediction table, so only the actual
+    regression subset contributes. Count each bout once, regardless of windows.
+    bias = (n_right - n_left) / n, with midpoint assigned to the right side.
+    Standard deviation and skewness use unique bout positions, too.
+    """
+    if regressions["settings"]["target"] != "initial_position":
+        raise ValueError("Use a regression bundle whose target is initial_position.")
+    if not np.isfinite(midpoint):
+        raise ValueError("midpoint must be finite.")
+    summary = regressions["summary"].copy()
+    fields = (
+        "n_position_bouts", "n_left", "n_right", "side_bias", "abs_side_bias",
+        "position_mean", "position_std", "position_skewness",
+    )
+    for field in fields:
+        summary[field] = np.nan
+    summary["position_midpoint"] = midpoint
+    for key, fit in regressions["fits"].items():
+        observed = fit["predictions"]["observed"]
+        by_bout = observed.groupby(level="bout_id", sort=False)
+        if (by_bout.nunique() > 1).any():
+            raise ValueError("Starting position must be constant across windows of each bout.")
+        positions = by_bout.first()
+        n = len(positions)
+        if not n:
+            continue
+        n_left = int((positions < midpoint).sum())
+        n_right = int((positions >= midpoint).sum())
+        bias = (n_right - n_left) / n
+        std = float(positions.std(ddof=1))
+        values = (
+            n, n_left, n_right, bias, abs(bias), float(positions.mean()), std,
+            float(positions.skew()) if n >= 3 and std > 0 else np.nan,
+        )
+        summary.loc[key, list(fields)] = values
+    return summary
+
+
+def plot_position_bias_scores(summary, *, score="r2_adjusted"):
+    """Compare scores against side imbalance and position spread per condition."""
+    import matplotlib.pyplot as plt
+
+    if score not in ("r2", "r2_adjusted"):
+        raise ValueError("score must be 'r2' or 'r2_adjusted'.")
+    ylabel = "Adjusted R-squared" if score == "r2_adjusted" else "R-squared"
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharey=True)
+    metrics = (
+        ("abs_side_bias", "Absolute side imbalance (0 = balanced, 1 = one-sided)"),
+        ("position_std", "Starting-position standard deviation (position units)"),
+    )
+    for col, (condition, name, color) in enumerate(((0, "Tracking", "red"), (1, "Playback", "black"))):
+        rows = summary.loc[(summary.index.get_level_values("condition") == condition) & (summary["status"] == "ok")]
+        for row, (metric, xlabel) in enumerate(metrics):
+            valid = rows.loc[np.isfinite(rows[score]) & np.isfinite(rows[metric])]
+            ax = axes[row, col]
+            ax.scatter(valid[metric], valid[score], color=color, s=25, alpha=0.65)
+            ax.axhline(0, color="gray", linestyle="--", linewidth=0.8)
+            ax.set(xlabel=xlabel, ylabel=ylabel, title=f"{name}: {len(valid)} session entries")
+            if metric == "abs_side_bias":
+                ax.set_xlim(-0.02, 1.02)
+            else:
+                upper = summary[metric].max()
+                ax.set_xlim(0, max(float(upper) * 1.05, 1) if np.isfinite(upper) else 1)
+    fig.tight_layout()
+    return fig, axes
+
+
+def plot_paired_bias_differences(summary, *, score="r2_adjusted"):
+    """Compare matched tracking-minus-playback differences in bias and score."""
+    import matplotlib.pyplot as plt
+
+    if score not in ("r2", "r2_adjusted"):
+        raise ValueError("score must be 'r2' or 'r2_adjusted'.")
+    valid = summary.loc[
+        (summary["status"] == "ok") & np.isfinite(summary[score]) & np.isfinite(summary["abs_side_bias"])
+    ]
+    scores = valid[score].unstack("condition").reindex(columns=[0, 1])
+    bias = valid["abs_side_bias"].unstack("condition").reindex(columns=[0, 1])
+    paired = pd.DataFrame({
+        "tracking_score": scores[0], "playback_score": scores[1],
+        "tracking_abs_bias": bias[0], "playback_abs_bias": bias[1],
+    }).dropna()
+    paired["score_difference"] = paired["tracking_score"] - paired["playback_score"]
+    paired["imbalance_difference"] = paired["tracking_abs_bias"] - paired["playback_abs_bias"]
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.scatter(paired["imbalance_difference"], paired["score_difference"], color="#7b3294", alpha=0.7)
+    ax.axhline(0, color="gray", linestyle="--", linewidth=0.8)
+    ax.axvline(0, color="gray", linestyle="--", linewidth=0.8)
+    ylabel = "Adjusted R-squared" if score == "r2_adjusted" else "R-squared"
+    ax.set(
+        xlabel="Absolute side imbalance: tracking - playback",
+        ylabel=f"{ylabel}: tracking - playback", title=f"Matched session differences ({len(paired)} pairs)",
+    )
+    fig.tight_layout()
+    return fig, ax, paired

@@ -302,3 +302,16 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   or movement size. Saves a separate all_bouts initial-position bundle; destination
   fits retain their existing filter. The user explicitly removed this filter from
   the starting-position analysis.
+
+- Section 21 compares existing starting-position regression scores with side
+  preference and position spread, without refitting. Helpers in evaluation.py:
+  `summarize_starting_position_bias`, `plot_position_bias_scores`, and
+  `plot_paired_bias_differences`. Use the actual fitted observations and count
+  each bout once. Midpoint 14: left <14, right >=14; signed bias is
+  (n_right-n_left)/n_bouts, absolute bias ranges from 0 balanced to 1 one-sided.
+  Store sample standard deviation and conventional skewness as distinct measures.
+  The four-panel plot compares adjusted R2 (or ordinary R2) with absolute bias and
+  spread by condition; the paired plot compares tracking-minus-playback differences
+  in score and absolute bias, matched by idx. These are descriptive checks, not
+  significance tests or corrections for behavioral sampling. The summary is saved
+  beside its starting-position regression bundle with `_position_bias.pkl` suffix.

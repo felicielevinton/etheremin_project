@@ -12,6 +12,7 @@ import pandas as pd
 from evaluation import (
     fit_label_regression, plot_label_regression,
     run_label_regressions, plot_regression_summary, plot_paired_regressions,
+    summarize_starting_position_bias, plot_position_bias_scores, plot_paired_bias_differences,
 )
 
 
@@ -200,6 +201,55 @@ class PairedRegressionTests(unittest.TestCase):
         only_tracking = self.summary.loc[self.summary.index.get_level_values("condition") == 0]
         with self.assertRaisesRegex(ValueError, "No complete finite"):
             plot_paired_regressions(only_tracking)
+
+
+class PositionBiasTests(unittest.TestCase):
+    def setUp(self):
+        # Unequal window counts would bias the distribution if rows were counted.
+        index = pd.MultiIndex.from_tuples(
+            [(10, -0.5), (10, -0.4), (10, -0.3), (20, -0.5), (30, -0.5), (30, -0.4), (40, -0.5)],
+            names=["bout_id", "bin_start_s"],
+        )
+        self.bundle = {
+            "settings": {"target": "initial_position"},
+            "summary": pd.DataFrame(
+                {"r2": [0.5, 0.2], "r2_adjusted": [0.4, 0.1], "status": ["ok", "ok"]},
+                index=pd.MultiIndex.from_tuples([(7, 0), (7, 1)], names=["idx", "condition"]),
+            ),
+            "fits": {
+                (7, 0): {"predictions": pd.DataFrame({"observed": [0, 0, 0, 7, 14, 14, 28]}, index=index)},
+                (7, 1): {"predictions": pd.DataFrame({"observed": [1, 1, 1, 2, 3, 3, 4]}, index=index)},
+            },
+        }
+
+    def test_distribution_uses_unique_bouts_and_midpoint_belongs_to_right(self):
+        summary = summarize_starting_position_bias(self.bundle)
+        self.assertEqual(summary.at[(7, 0), "n_position_bouts"], 4)
+        self.assertEqual(summary.at[(7, 0), "n_left"], 2)
+        self.assertEqual(summary.at[(7, 0), "n_right"], 2)
+        self.assertEqual(summary.at[(7, 0), "side_bias"], 0)
+        self.assertEqual(summary.at[(7, 1), "side_bias"], -1)
+        self.assertEqual(summary.at[(7, 1), "abs_side_bias"], 1)
+        self.assertAlmostEqual(summary.at[(7, 0), "position_mean"], 12.25)
+        self.assertAlmostEqual(summary.at[(7, 0), "position_std"], np.std([0, 7, 14, 28], ddof=1))
+        self.assertNotIn("side_bias", self.bundle["summary"].columns)
+        fig, _ = plot_position_bias_scores(summary)
+        fig.canvas.draw()
+        plt.close(fig)
+        fig, ax, paired = plot_paired_bias_differences(summary)
+        self.assertAlmostEqual(paired.at[7, "imbalance_difference"], -1)
+        self.assertAlmostEqual(paired.at[7, "score_difference"], 0.3)
+        np.testing.assert_allclose(ax.collections[0].get_offsets(), [[-1, 0.3]])
+        plt.close(fig)
+
+    def test_wrong_target_and_inconsistent_bout_labels_are_rejected(self):
+        self.bundle["settings"]["target"] = "final_position"
+        with self.assertRaisesRegex(ValueError, "initial_position"):
+            summarize_starting_position_bias(self.bundle)
+        self.bundle["settings"]["target"] = "initial_position"
+        self.bundle["fits"][(7, 0)]["predictions"].iloc[1, 0] = 5
+        with self.assertRaisesRegex(ValueError, "constant across windows"):
+            summarize_starting_position_bias(self.bundle)
 
 
 if __name__ == "__main__":
