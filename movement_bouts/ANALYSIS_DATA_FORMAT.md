@@ -192,3 +192,38 @@ by session idx and returns `(figure, axes, paired_table)`. The table contains
 `tracking`, `playback`, and `difference` (tracking minus playback). Both fits must
 be successful with finite scores; incomplete pairs are excluded. Select "r2" for
 ordinary R2. This plots saved results without model fitting or significance tests.
+
+## Descriptive left/right logistic regression
+
+`fit_direction_logistic(data, labels, C=1.0)` uses the same aligned tables and
+observation IDs. Only `initial_direction` -1 (leftward) and +1 (rightward) are
+included; 0/missing/unknown values are excluded. Both directions are required.
+This label describes movement direction, not the side of the starting position.
+
+The saved `model` is a Pipeline containing StandardScaler followed by logistic
+regression with an intercept, L2 regularization, inverse penalty strength C,
+and `class_weight="balanced"`. Scaling is fitted to the selected coordinates
+within each classifier; saved PCA models and coordinates are unchanged.
+See the [scikit-learn logistic regression documentation](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LogisticRegression.html).
+
+Results include `balanced_accuracy`, `recall_left`, `recall_right`, `n_excluded`,
+and an indexed `predictions` table with `observed`, `predicted`, and
+`probability_right`. Balanced accuracy is the mean of the two direction recalls;
+a constant classifier scores 0.5 when both directions are present. Scores are
+computed on the fitted observations, without held-out evaluation or randomization.
+
+`run_direction_logistics(cache, columns=[...], C=1.0)` fits one classifier per
+session/condition, pooling all windows and applying no displacement filter.
+It returns `summary`, `fits`, and `settings` like the linear regression batch.
+The summary records observation and unique-bout counts, including left/right
+counts separately, scores, status and skip reason. Missing columns, one-class
+subsets, and convergence failures are recorded as skipped. Models and prediction
+tables are keyed by `(idx, condition)`; settings retain scaling, penalty, weighting,
+solver, source PCA settings, and representation basis.
+
+Notebook section 22 saves this bundle as `evaluation/logistic_initial_direction_...
+_pooled.pkl` under the premotor activity directory. Existing plotting helpers
+`plot_regression_summary` and `plot_paired_regressions` accept
+`score="balanced_accuracy"`. Absolute-score plots have a 0.5 reference; the
+tracking-minus-playback difference plot has a zero reference. No model fitting
+occurs in either plotting helper.

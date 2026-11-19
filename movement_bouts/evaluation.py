@@ -199,7 +199,7 @@ def run_label_regressions(pca_cache, *, target, columns, min_displacement=None):
 
 
 def plot_regression_summary(summary, *, score="r2_adjusted"):
-    """Plot one score per session/condition PCA, without time-window splitting."""
+    """Plot linear/logistic scores per session/condition, without window splitting."""
     import matplotlib.pyplot as plt
 
     if summary.index.names != ["idx", "condition"] or not summary.index.is_unique:
@@ -207,7 +207,11 @@ def plot_regression_summary(summary, *, score="r2_adjusted"):
     rows = summary.reset_index()
     rows = rows.loc[(rows["status"] == "ok") & np.isfinite(rows[score])]
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), sharex=True, sharey=True)
-    ylabel = {"r2": "Descriptive R-squared", "r2_adjusted": "Adjusted R-squared", "mae": "MAE"}.get(score, score)
+    ylabel = {
+        "r2": "Descriptive R-squared", "r2_adjusted": "Adjusted R-squared",
+        "mae": "MAE", "balanced_accuracy": "Balanced accuracy",
+    }.get(score, score)
+    reference = 0.5 if score == "balanced_accuracy" else 0
     for ax, (condition, name, color) in zip(axes, ((0, "Tracking", "red"), (1, "Playback", "black"))):
         condition_rows = rows.loc[rows["condition"] == condition].sort_values("idx")
         if len(condition_rows):
@@ -216,8 +220,10 @@ def plot_regression_summary(summary, *, score="r2_adjusted"):
             ax.legend(frameon=False)
         else:
             ax.text(0.5, 0.5, "No valid scores", ha="center", transform=ax.transAxes)
-        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8)
+        ax.axhline(reference, color="gray", linestyle="--", linewidth=0.8)
         ax.set(title=f"{name}: one point per PCA", xlabel="Session entry (idx)", ylabel=ylabel)
+        if score == "balanced_accuracy":
+            ax.set_ylim(-0.02, 1.02)
     fig.tight_layout()
     return fig, axes
 
@@ -233,8 +239,8 @@ def plot_paired_regressions(summary, *, score="r2_adjusted"):
 
     if summary.index.names != ["idx", "condition"] or not summary.index.is_unique:
         raise ValueError("Use the pooled summary indexed by (idx, condition).")
-    if score not in ("r2", "r2_adjusted"):
-        raise ValueError("score must be 'r2' or 'r2_adjusted'.")
+    if score not in ("r2", "r2_adjusted", "balanced_accuracy"):
+        raise ValueError("score must be 'r2', 'r2_adjusted' or 'balanced_accuracy'.")
     valid = summary.loc[(summary["status"] == "ok") & np.isfinite(summary[score])]
     paired = valid[score].unstack("condition").reindex(columns=[0, 1]).dropna()
     paired = paired.rename(columns={0: "tracking", 1: "playback"})
@@ -242,17 +248,22 @@ def plot_paired_regressions(summary, *, score="r2_adjusted"):
         raise ValueError("No complete finite tracking/playback pairs are available.")
     paired["difference"] = paired["tracking"] - paired["playback"]
 
-    label = "Adjusted R-squared" if score == "r2_adjusted" else "R-squared"
+    label = {
+        "r2": "R-squared", "r2_adjusted": "Adjusted R-squared",
+        "balanced_accuracy": "Balanced accuracy",
+    }[score]
     fig, axes = plt.subplots(1, 2, figsize=(11, 5))
     for row in paired.itertuples():
         axes[0].plot([0, 1], [row.tracking, row.playback], color="gray", alpha=0.3, linewidth=0.8)
     axes[0].scatter(np.zeros(len(paired)), paired["tracking"], color="red", s=22, alpha=0.6)
     axes[0].scatter(np.ones(len(paired)), paired["playback"], color="black", s=22, alpha=0.6)
-    axes[0].axhline(0, color="gray", linestyle="--", linewidth=0.8)
+    axes[0].axhline(0.5 if score == "balanced_accuracy" else 0, color="gray", linestyle="--", linewidth=0.8)
     axes[0].set(
         xticks=[0, 1], xticklabels=["Tracking", "Playback"], xlim=(-0.3, 1.3),
         ylabel=label, title=f"Matched sessions: {len(paired)} pairs\nOne line per session entry",
     )
+    if score == "balanced_accuracy":
+        axes[0].set_ylim(-0.02, 1.02)
 
     axes[1].scatter(paired.index, paired["difference"], color="#7b3294", s=25, alpha=0.7)
     axes[1].axhline(0, color="gray", linestyle="--", linewidth=0.8)
@@ -267,6 +278,133 @@ def plot_paired_regressions(summary, *, score="r2_adjusted"):
     axes[1].legend(frameon=False)
     fig.tight_layout()
     return fig, axes, paired
+
+
+def fit_direction_logistic(data, labels, *, C=1.0):
+    """Fit a descriptive left/right classifier to aligned bout/window tables.
+
+    Keep initial_direction -1 (left) and +1 (right); exclude all other values.
+    Fit StandardScaler and L2 logistic regression (intercept, balanced class
+    weights) together in a saved Pipeline. C controls inverse penalty strength.
+    Return balanced accuracy, both direction recalls, and indexed predictions
+    with observed/predicted direction and probability_right. Scores use the
+    fitted observations; no PCA fitting, holdout, or randomization is performed.
+    """
+    import warnings
+
+    from sklearn.exceptions import ConvergenceWarning
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import balanced_accuracy_score
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    validate_data_labels(data, labels)
+    if not np.isfinite(C) or C <= 0:
+        raise ValueError("C must be a finite positive number.")
+    keep = labels["initial_direction"].isin([-1, 1])
+    x = data.loc[keep]
+    y = labels.loc[keep, "initial_direction"].astype(int)
+    if y.nunique() != 2:
+        raise ValueError("Both left (-1) and right (+1) observations are required.")
+    model = make_pipeline(
+        StandardScaler(),
+        LogisticRegression(C=C, class_weight="balanced", solver="lbfgs", max_iter=2000, tol=1e-6),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConvergenceWarning)
+        try:
+            model.fit(x, y)
+        except ConvergenceWarning as error:
+            raise ValueError("Logistic regression did not converge.") from error
+    predicted = model.predict(x)
+    right_column = list(model.classes_).index(1)
+    predictions = pd.DataFrame({
+        "observed": y, "predicted": predicted,
+        "probability_right": model.predict_proba(x)[:, right_column],
+    }, index=x.index)
+    return {
+        "model": model, "target": "initial_direction", "C": C,
+        "n_features": x.shape[1], "n_excluded": int((~keep).sum()),
+        "balanced_accuracy": float(balanced_accuracy_score(y, predicted)),
+        "recall_left": float((predicted[y == -1] == -1).mean()),
+        "recall_right": float((predicted[y == 1] == 1).mean()),
+        "predictions": predictions,
+    }
+
+
+def run_direction_logistics(pca_cache, *, columns, C=1.0):
+    """Fit one left/right logistic regression per session/condition, all windows.
+
+    Use saved coordinates and only known directions, without displacement or
+    position filtering. Return summary/fits/settings; keys are (idx, condition).
+    Keep failed subsets as skipped rows with a reason; do not stop other fits.
+    Counts distinguish bout/window observations from unique bouts. No file I/O.
+    """
+    if isinstance(columns, str):
+        raise TypeError("columns must be a sequence of feature names.")
+    columns = list(columns)
+    if not columns or len(columns) != len(set(columns)):
+        raise ValueError("Supply a nonempty sequence of unique feature names.")
+    if not np.isfinite(C) or C <= 0:
+        raise ValueError("C must be a finite positive number.")
+    records, fits = [], {}
+    for idx, condition_fits in pca_cache["sessions"].items():
+        info = pca_cache["session_info"].loc[idx]
+        for condition, pca_fit in condition_fits.items():
+            rows = pca_fit["results"]
+            record = {
+                "idx": idx, "condition": condition,
+                "animal": info["animal"], "headstage": info["headstage"],
+                "session": info["session"], "region": info.get("region", None),
+                "target": "initial_direction", "n_features": len(columns),
+                "time_start_s": float(rows.index.get_level_values("bin_start_s").min()),
+                "time_end_s": float(rows["bin_end_s"].max()),
+                "n_windows": int(rows["bin_number"].nunique()),
+                "n_candidates": len(rows), "n_excluded_target": 0,
+                "n_observations": 0, "n_bouts": 0,
+                "n_left_observations": 0, "n_right_observations": 0,
+                "n_left_bouts": 0, "n_right_bouts": 0,
+                "balanced_accuracy": np.nan, "recall_left": np.nan, "recall_right": np.nan,
+                "status": "skipped", "reason": "",
+            }
+            missing = (set(columns) | {"initial_direction"}).difference(rows.columns)
+            if missing:
+                record["reason"] = "Missing columns: " + ", ".join(sorted(missing))
+                records.append(record)
+                continue
+            valid = rows["initial_direction"].isin([-1, 1])
+            selected = rows.loc[valid]
+            record["n_excluded_target"] = int((~valid).sum())
+            record["n_observations"] = len(selected)
+            record["n_bouts"] = selected.index.get_level_values("bout_id").nunique()
+            for direction, name in ((-1, "left"), (1, "right")):
+                direction_rows = selected.loc[selected["initial_direction"] == direction]
+                record[f"n_{name}_observations"] = len(direction_rows)
+                record[f"n_{name}_bouts"] = direction_rows.index.get_level_values("bout_id").nunique()
+            try:
+                fit = fit_direction_logistic(rows[columns], rows, C=C)
+            except ValueError as error:
+                record["reason"] = str(error)
+            else:
+                fits[(idx, condition)] = fit
+                record.update({name: fit[name] for name in ("balanced_accuracy", "recall_left", "recall_right")})
+                record["status"] = "ok"
+            records.append(record)
+    if not records:
+        raise ValueError("No session/condition subsets are available to evaluate.")
+    return {
+        "summary": pd.DataFrame(records).set_index(["idx", "condition"]),
+        "fits": fits,
+        "settings": {
+            "target": "initial_direction", "columns": columns, "C": C,
+            "penalty": "l2", "standardized": True, "class_weight": "balanced",
+            "solver": "lbfgs", "max_iter": 2000, "tol": 1e-6,
+            "valid_directions": [-1, 1], "window_mode": "pooled",
+            "min_displacement": None, "scoring": "descriptive_in_sample",
+            "projection_basis": pca_cache.get("projection_basis", "separate_condition_pcas"),
+            "pca_settings": dict(pca_cache.get("settings", {})),
+        },
+    }
 
 
 def summarize_starting_position_bias(regressions, *, midpoint=14.0):

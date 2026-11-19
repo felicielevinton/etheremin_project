@@ -2,6 +2,7 @@
 
 import io
 import unittest
+from unittest.mock import patch
 
 import matplotlib
 matplotlib.use("Agg")
@@ -13,6 +14,7 @@ from evaluation import (
     fit_label_regression, plot_label_regression,
     run_label_regressions, plot_regression_summary, plot_paired_regressions,
     summarize_starting_position_bias, plot_position_bias_scores, plot_paired_bias_differences,
+    fit_direction_logistic, run_direction_logistics,
 )
 
 
@@ -250,6 +252,112 @@ class PositionBiasTests(unittest.TestCase):
         self.bundle["fits"][(7, 0)]["predictions"].iloc[1, 0] = 5
         with self.assertRaisesRegex(ValueError, "constant across windows"):
             summarize_starting_position_bias(self.bundle)
+
+
+class DirectionLogisticTests(unittest.TestCase):
+    def setUp(self):
+        index = pd.MultiIndex.from_product(
+            [range(10, 90, 10), [-0.2, -0.1]], names=["bout_id", "bin_start_s"]
+        )
+        x = np.repeat([-4, -3, -2, -1, 1, 2, 3, 4], 2)
+        self.data = pd.DataFrame({"PC1": x * 1000.0, "PC2": x ** 2}, index=index)
+        self.labels = pd.DataFrame({
+            "initial_direction": np.sign(x).astype(float), "unused": np.nan,
+            "bin_number": np.tile([0, 1], 8), "bin_end_s": np.tile([-0.1, 0.0], 8),
+        }, index=index)
+        rows = self.data.join(self.labels)
+        self.cache = {
+            "sessions": {7: {0: {"results": rows}, 1: {"results": rows.copy()}}},
+            "session_info": pd.DataFrame(
+                {"animal": ["example"], "headstage": [0], "region": ["AC"], "session": [3]}, index=[7]
+            ),
+            "settings": {"N_BINS": 2},
+        }
+
+    def test_direction_identity_probabilities_and_scaling_are_preserved(self):
+        original = self.data.copy()
+        result = fit_direction_logistic(self.data, self.labels)
+        self.assertEqual(result["balanced_accuracy"], 1)
+        self.assertEqual(result["recall_left"], 1)
+        self.assertEqual(result["recall_right"], 1)
+        predictions = result["predictions"]
+        self.assertTrue(predictions.index.equals(self.data.index))
+        np.testing.assert_array_equal(predictions.predicted, self.labels.initial_direction)
+        np.testing.assert_allclose(predictions.probability_right, result["model"].predict_proba(self.data)[:, 1])
+        self.assertTrue((predictions.loc[predictions.observed == 1, "probability_right"] > 0.5).all())
+        self.assertEqual(result["model"].named_steps["logisticregression"].class_weight, "balanced")
+        scaled = result["model"].named_steps["standardscaler"].transform(self.data)
+        np.testing.assert_allclose(scaled.std(axis=0), 1)
+        pd.testing.assert_frame_equal(original, self.data)
+
+    def test_unknown_directions_are_excluded_and_both_classes_required(self):
+        self.labels.iloc[1, 0] = 0
+        self.labels.iloc[9, 0] = np.nan
+        result = fit_direction_logistic(self.data, self.labels)
+        self.assertEqual(result["n_excluded"], 2)
+        self.assertTrue(result["predictions"].index.equals(self.data.drop(self.data.index[[1, 9]]).index))
+        with self.assertRaisesRegex(ValueError, "Both left"):
+            fit_direction_logistic(self.data, self.labels.assign(initial_direction=-1))
+        with self.assertRaisesRegex(ValueError, "identical indices"):
+            fit_direction_logistic(self.data, self.labels.iloc[::-1])
+        with self.assertRaisesRegex(ValueError, "finite positive"):
+            fit_direction_logistic(self.data, self.labels, C=0)
+
+    def test_balanced_accuracy_does_not_reward_a_constant_majority_prediction(self):
+        labels = self.labels.assign(initial_direction=[-1] * 14 + [1] * 2)
+        result = fit_direction_logistic(self.data * 0, labels)
+        self.assertEqual(result["predictions"].predicted.nunique(), 1)
+        self.assertEqual(result["balanced_accuracy"], 0.5)
+        self.assertAlmostEqual(result["balanced_accuracy"], (result["recall_left"] + result["recall_right"]) / 2)
+
+    def test_batch_pools_windows_keeps_counts_and_serializes(self):
+        self.cache["sessions"][7][1]["results"].iloc[0, 2] = 0
+        result = run_direction_logistics(self.cache, columns=["PC1", "PC2"])
+        self.assertEqual(len(result["fits"]), 2)
+        self.assertEqual(result["summary"].index.names, ["idx", "condition"])
+        self.assertEqual(result["summary"].at[(7, 0), "n_bouts"], 8)
+        self.assertEqual(result["summary"].at[(7, 0), "n_observations"], 16)
+        self.assertEqual(result["summary"].at[(7, 0), "n_left_bouts"], 4)
+        self.assertEqual(result["summary"].at[(7, 0), "n_left_observations"], 8)
+        self.assertEqual(result["summary"].at[(7, 1), "n_excluded_target"], 1)
+        self.assertEqual(result["settings"]["window_mode"], "pooled")
+        self.assertTrue(result["settings"]["standardized"])
+        stream = io.BytesIO()
+        pd.to_pickle(result, stream)
+        stream.seek(0)
+        reloaded = pd.read_pickle(stream)
+        pd.testing.assert_frame_equal(result["summary"], reloaded["summary"])
+        np.testing.assert_array_equal(
+            reloaded["fits"][(7, 0)]["model"].predict(self.data), result["fits"][(7, 0)]["predictions"].predicted
+        )
+        self.cache["sessions"][7][1]["results"]["initial_direction"] = -1
+        skipped = run_direction_logistics(self.cache, columns=["PC1"])
+        self.assertEqual(len(skipped["fits"]), 1)
+        self.assertEqual(skipped["summary"].at[(7, 1), "status"], "skipped")
+        self.assertIn("Both left", skipped["summary"].at[(7, 1), "reason"])
+        missing = run_direction_logistics(self.cache, columns=["PC9"])
+        self.assertFalse(missing["fits"])
+        self.assertTrue(missing["summary"].reason.str.contains("Missing columns: PC9").all())
+
+    def test_plots_use_saved_balanced_scores_and_match_session_ids(self):
+        summary = pd.DataFrame([
+            (99, 1, 0.6, "ok"), (7, 0, 0.8, "ok"), (99, 0, 0.9, "ok"),
+            (7, 1, 0.5, "ok"), (42, 0, 0.8, "ok"), (42, 1, np.nan, "skipped"),
+        ], columns=["idx", "condition", "balanced_accuracy", "status"]).set_index(["idx", "condition"])
+        with patch("sklearn.linear_model.LogisticRegression.fit", side_effect=AssertionError("Unexpected fit")):
+            fig, axes = plot_regression_summary(summary, score="balanced_accuracy")
+            for ax in axes:
+                self.assertEqual(ax.get_ylabel(), "Balanced accuracy")
+                np.testing.assert_allclose(ax.lines[-1].get_ydata(), [0.5, 0.5])
+            fig.canvas.draw()
+            plt.close(fig)
+            fig, axes, paired = plot_paired_regressions(summary, score="balanced_accuracy")
+            self.assertEqual(paired.index.tolist(), [7, 99])
+            np.testing.assert_allclose(paired.difference, [0.3, 0.3])
+            np.testing.assert_allclose(axes[0].lines[-1].get_ydata(), [0.5, 0.5])
+            np.testing.assert_allclose(axes[1].lines[0].get_ydata(), [0, 0])
+            fig.canvas.draw()
+            plt.close(fig)
 
 
 if __name__ == "__main__":

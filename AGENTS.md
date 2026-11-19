@@ -315,3 +315,18 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   in score and absolute bias, matched by idx. These are descriptive checks, not
   significance tests or corrections for behavioral sampling. The summary is saved
   beside its starting-position regression bundle with `_position_bias.pkl` suffix.
+
+- Section 22 fits one descriptive left/right logistic regression per session and
+  condition, using PC1-PC3 by default, all windows pooled, no displacement filter.
+  `fit_direction_logistic` and `run_direction_logistics` live in evaluation.py.
+  Target initial_direction -1/+1 is movement direction, not starting side; exclude
+  0/missing/unknown labels and skip subsets without both directions. Use a saved
+  StandardScaler + L2 logistic Pipeline (C=1, intercept, balanced class weights).
+  Standardize selected coordinates only within the classifier; do not refit PCA.
+  Save models, indexed direction/probability predictions, summaries and settings
+  under evaluation/logistic_initial_direction_..._pooled.pkl. Summary counts
+  distinguish observations and bouts, including both directions separately.
+  Existing plot_regression_summary/plot_paired_regressions support
+  score="balanced_accuracy", with 0.5 absolute-score and zero difference references.
+  These remain in-sample descriptive scores; no holdout, randomization or
+  significance tests were requested. Sections 18-21 keep their prior behavior.
