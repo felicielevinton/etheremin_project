@@ -149,38 +149,58 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
 - `movement_bouts/utils.py` provides `extract_premotor_bouts()` for one session
   and `extract_all_premotor_bouts()` to load collections once and process their
   sessions individually. Pass `session_info.loc[[idx]]` to the latter for one session.
-- `movement_bouts/analyse_neuronal_activity.ipynb` extracts and saves the tables
-  in `../data/derived/premotor_activity/` relative to the repository root.
+- `movement_bouts/analyse_neuronal_activity.ipynb` saves wider raw counts in
+  `../data/derived/premotor_activity/extracted_-1.2_0/` relative to the repository
+  root. The extraction interval is configurable; always read its saved metadata.
 - `neuronal_bouts.pkl` has one `spike_counts` column. Its index is the original
   `movement_bouts` row index, never reset. Each cell holds an independent array
-  shaped `(neurons, original time bins)` of spike counts. The current window is
-  `[-0.5, 0)` seconds, giving 100 bins at 5 ms resolution, excluding movement onset.
+  shaped `(neurons, original time bins)` of spike counts. The new extraction is
+  `[-1.2, 0)` seconds, giving 240 bins at 5 ms resolution, excluding movement onset.
+  Earlier 100-bin files remain at the premotor_activity root as prior outputs.
 - `movement_bouts` remains the reference for all behavioral metadata. Join neural
   rows by index; select a session before stacking arrays, since neuron counts vary.
 - `neuron_ids_by_session.pkl` has a `neuron_ids` column indexed by session `idx`.
   `excluded_bouts.pkl` records skipped bout indices and exclusion reasons. Incomplete
   windows are skipped without failing the session; immobility is not checked again.
-- `parameters.json` records extraction timing, source-table SHA-256 fingerprints,
+- `parameters.json` beside the extracted counts records DT, window_s, n_time_bins,
+  source-table SHA-256 fingerprints,
   source bout-detection parameters, session indices, and export time. Regenerate
   neural outputs if the reference bout table is regenerated or its indices change.
-- Averaging is separate from extraction: `N_BINS` is the number of equal temporal
-  windows (5 gives 100 ms, 2 gives 250 ms, 1 gives 500 ms). Sum counts in each window
+- Averaging is separate from extraction: `N_BINS` divides ANALYSIS_WINDOW_S,
+  initially [-0.5, 0), rather than the whole saved array. Five windows give 100 ms,
+  two give 250 ms, one gives 500 ms. Sum counts in each window
   and divide by its duration for spikes/s; retain the original-resolution counts.
 - `prepare_pca_input()` in `movement_bouts/utils.py` selects one session, averages
-  its counts, and returns two aligned in-memory DataFrames: `pca_input` (observations
+  its analysis-window counts, and returns two aligned in-memory DataFrames: `pca_input` (observations
   by neurons, in spikes/s) and `pca_labels` (original bout metadata plus `bin_number`
   and `bin_end_s`). Both use `(bout_id, bin_start_s)` as their index. Rows follow
   each bout's windows in chronological order. No extra intermediate files are saved.
+- Pass the saved extraction_window_s and DT explicitly to prepare_pca_input, plus
+  analysis_window_s, n_bins, activity_mode and (when used) baseline_window_s.
+  Raw is the notebook default. In baseline_subtracted mode subtract each bout and
+  neuron's baseline mean rate (initially [-1, -0.5)) from all its analysis windows.
+  Units stay spikes/s; negatives are meaningful. The two-table return and original
+  observation IDs are unchanged. Windows must align to DT, fit the saved array,
+  and baseline must end at/before analysis start. Do not recheck immobility.
 - `fit_pca_by_condition()` fits separate PCAs for tracking (0) and playback (1).
   Each centers its own firing rates, without variance standardization or whitening,
   and retains all components. Each condition entry holds `model` and `results`
   (coordinates joined to bout/window labels). Conditions with fewer than two
   observations are omitted. `plot_pca_session()` only draws these saved results.
 - Notebook section 7 computes all sessions and saves models and labeled results
-  together in `data/derived/premotor_activity/pca/pca_{N_BINS}bins.pkl` relative to
-  the workspace root. Load with `pd.read_pickle()`. This dictionary contains
+  together under the selected run_dir/pca/pca_{N_BINS}bins.pkl. Constants define
+  run_dir = premotor_dir/runs/analysis_{start}_{end}_{N_BINS}bins_{activity_mode},
+  adding baseline bounds for baseline_subtracted. All viewers, projections and
+  evaluations follow central pca_path/evaluation_dir variables. Prior root-level
+  results are retained. Load with `pd.read_pickle()`. This dictionary contains
   `sessions[idx][condition]`, `settings`, `session_info`, `skipped_sessions`, and
   global `position_limits`. The current 5-bin file has 160 models for 80 sessions.
+- PCA settings record activity_mode, analysis_window_s, baseline_window_s (None
+  for raw), extraction_directory and embedded extraction_parameters. Projection
+  inputs must be prepared from the reference PCA's saved settings, not the current
+  notebook preprocessing constants. Section 3 includes a raw/corrected example
+  heatmap and baseline rates; corrected heatmaps use a diverging scale centered
+  at zero. Extraction and analysis interval changes must not be conflated.
 - To browse saved PCAs, run sections 1, 8, and 9. Section 8 displays a position
   viewer; section 9 displays a direction viewer. Each has its own session slider
   and one Plotly FigureWidget, created by `make_interactive_pca_browser()` with
@@ -210,7 +230,7 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
 - Section 11 projects playback onto each session's saved tracking PCA using
   `project_onto_tracking_pca()`. Both conditions use tracking mean/loadings via
   `transform()`; no refitting or playback recentering. Results are saved separately
-  in `pca/pca_tracking_projection_{N_BINS}bins.pkl` with `projection_basis="tracking"`.
+  in the selected run's `pca/pca_tracking_projection_{N_BINS}bins.pkl` with `projection_basis="tracking"`.
   The new position-colored viewer has matching axis limits and linked cameras;
   percentages refer to tracking variance. Existing separate-PCAs caches are unchanged.
 
@@ -283,7 +303,7 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   Report n_observations and n_bouts separately. Residual degrees of freedom and
   adjusted R2 use design-row count and do not correct within-bout dependence.
   Invalid subsets have status/reason; saturated fits have undefined adjusted R2.
-- Batch bundles are saved under `data/derived/premotor_activity/evaluation/` with
+- Batch bundles are saved under the selected run's `evaluation/` directory with
   `_pooled.pkl` suffix and `settings["window_mode"]="pooled"`. Models, predictions
   and settings are saved together. `plot_regression_summary()` displays one dot
   per PCA against session idx, with separate tracking/playback panels and mean

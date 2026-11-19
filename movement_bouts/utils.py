@@ -93,40 +93,53 @@ def detect_movement_bouts(
     return movement_bouts, immobility_bouts
 
 
-def extract_premotor_bouts(neural_data, session_bouts, *, dt, premotor_duration_s):
+def _window_bins(window_s, dt, name):
+    """Convert a finite, ordered premotor interval to exact original-bin offsets."""
+    if not np.isfinite(dt) or dt <= 0:
+        raise ValueError("dt must be a positive finite bin width in seconds.")
+    edges = np.asarray(window_s, dtype=float)
+    if edges.shape != (2,) or not np.isfinite(edges).all():
+        raise ValueError(f"{name} must contain two finite times in seconds.")
+    if edges[0] >= edges[1] or edges[1] > 0:
+        raise ValueError(f"{name} must have start < end <= 0.")
+    offsets = np.rint(edges / dt).astype(int)
+    if not np.allclose(offsets * dt, edges, rtol=0, atol=1e-10):
+        raise ValueError(f"{name} must align with the original time bins.")
+    return offsets
+
+
+def extract_premotor_bouts(neural_data, session_bouts, *, dt, extraction_window_s):
     """Extract one session into a table keyed by the original bout index.
 
     Each spike_counts cell is an independent (neurons, time bins) array for
-    [-premotor_duration_s, 0), retaining the original counts and bin width.
+    extraction_window_s, start-inclusive and end-exclusive relative to onset.
+    Retain original counts and bin width; analysis/baseline selection comes later.
     Return (neuronal_bouts, excluded_bouts). The latter contains only reasons;
     all behavioral metadata remains in the original movement_bouts table.
     """
-    if dt <= 0 or premotor_duration_s <= 0:
-        raise ValueError("Bin width and premotor duration must be positive.")
-    n_bins = round(premotor_duration_s / dt)
-    if n_bins < 1 or not np.isclose(n_bins * dt, premotor_duration_s, rtol=0, atol=1e-10):
-        raise ValueError("Premotor duration must contain a whole number of bins.")
+    offsets = _window_bins(extraction_window_s, dt, "extraction_window_s")
     if neural_data.ndim != 2:
         raise ValueError("Neural data must have shape (neurons, time bins).")
     if not session_bouts.index.is_unique:
         raise ValueError("Movement-bout indices must be unique.")
 
     onset_bins = session_bouts["onset_bin"].to_numpy(dtype=int)
-    start_bins = onset_bins - n_bins
-    valid = (start_bins >= 0) & (onset_bins < neural_data.shape[1])
+    start_bins = onset_bins + offsets[0]
+    stop_bins = onset_bins + offsets[1]
+    valid = (start_bins >= 0) & (onset_bins >= 0) & (onset_bins < neural_data.shape[1])
 
     # Copy slices so the extracted windows do not retain the full recording.
     neuronal_bouts = pd.DataFrame(
         {"spike_counts": [
-            neural_data[:, start:onset].copy()
-            for start, onset in zip(start_bins[valid], onset_bins[valid])
+            neural_data[:, start:stop].copy()
+            for start, stop in zip(start_bins[valid], stop_bins[valid])
         ]},
         index=session_bouts.index[valid],
     )
     excluded_bouts = pd.DataFrame(
         {"exclusion_reason": np.where(
             start_bins[~valid] < 0,
-            "Premotor window starts before recording",
+            "Extraction window starts before recording",
             "Movement onset is outside recording",
         )},
         index=session_bouts.index[~valid],
@@ -135,7 +148,7 @@ def extract_premotor_bouts(neural_data, session_bouts, *, dt, premotor_duration_
 
 
 def extract_all_premotor_bouts(
-    data_dir, movement_bouts, session_info, *, dt, premotor_duration_s
+    data_dir, movement_bouts, session_info, *, dt, extraction_window_s
 ):
     """Load collections once and extract their sessions one at a time.
 
@@ -143,6 +156,7 @@ def extract_all_premotor_bouts(
     Bout tables retain the movement_bouts index. Neuron IDs use the
     session_info index (idx). Pass session_info.loc[[idx]] for one session.
     """
+    _window_bins(extraction_window_s, dt, "extraction_window_s")
     if not movement_bouts.index.is_unique or not session_info.index.is_unique:
         raise ValueError("Bout and session indices must be unique.")
     data_dir = Path(data_dir)
@@ -166,7 +180,7 @@ def extract_all_premotor_bouts(
                 raise ValueError(f"Neural dimensions do not match session_info for idx={idx}.")
             session_bouts = movement_bouts.loc[movement_bouts["idx"] == idx]
             bouts, excluded = extract_premotor_bouts(
-                neural_data, session_bouts, dt=dt, premotor_duration_s=premotor_duration_s
+                neural_data, session_bouts, dt=dt, extraction_window_s=extraction_window_s
             )
             bout_tables.append(bouts)
             excluded_tables.append(excluded)
@@ -194,21 +208,36 @@ def extract_all_premotor_bouts(
 
 
 def prepare_pca_input(
-    neuronal_bouts, movement_bouts, neuron_ids_by_session, *, idx, dt, n_bins
+    neuronal_bouts, movement_bouts, neuron_ids_by_session, *, idx, dt, n_bins,
+    extraction_window_s, analysis_window_s, baseline_window_s=None, activity_mode="raw",
 ):
     """Average one session's counts and return aligned neural/metadata tables.
 
-    n_bins is the number of equal windows spanning the saved premotor period.
-    Return pca_input (observations x neurons, spikes/s) and pca_labels (all
+    Slice analysis_window_s from counts covering the saved extraction_window_s.
+    n_bins is the number of equal averaging windows within the analysis interval.
+    In baseline_subtracted mode, subtract each bout/neuron's mean baseline firing
+    rate from all its analysis windows. Both raw/corrected values are in spikes/s.
+    Return pca_input (observations x neurons) and pca_labels (all
     original bout metadata, bin_number, bin_end_s). Both share the unique index
     (bout_id, bin_start_s), ordered by bout then increasing window time.
     Bout-level labels are repeated, not recomputed within each window.
-    This function performs no file I/O, standardization, or PCA fitting.
+    This function performs no file I/O, variance standardization, or PCA fitting.
     """
     if not isinstance(n_bins, (int, np.integer)) or n_bins <= 0:
         raise ValueError("n_bins must be a positive integer.")
-    if not np.isfinite(dt) or dt <= 0:
-        raise ValueError("dt must be a positive bin width in seconds.")
+    extraction_edges = _window_bins(extraction_window_s, dt, "extraction_window_s")
+    analysis_edges = _window_bins(analysis_window_s, dt, "analysis_window_s")
+    if analysis_edges[0] < extraction_edges[0] or analysis_edges[1] > extraction_edges[1]:
+        raise ValueError("Analysis window must be contained in the saved extraction.")
+    if activity_mode not in ("raw", "baseline_subtracted"):
+        raise ValueError("activity_mode must be 'raw' or 'baseline_subtracted'.")
+    baseline_edges = None
+    if activity_mode == "baseline_subtracted":
+        baseline_edges = _window_bins(baseline_window_s, dt, "baseline_window_s")
+        if baseline_edges[0] < extraction_edges[0] or baseline_edges[1] > extraction_edges[1]:
+            raise ValueError("Baseline window must be contained in the saved extraction.")
+        if baseline_edges[1] > analysis_edges[0]:
+            raise ValueError("Baseline window must end at or before the analysis window starts.")
 
     session_bouts = movement_bouts.loc[movement_bouts["idx"] == idx].join(
         neuronal_bouts, how="inner", validate="one_to_one"
@@ -218,15 +247,29 @@ def prepare_pca_input(
     neuron_ids = neuron_ids_by_session.loc[idx, "neuron_ids"]
     spike_counts = np.stack(session_bouts["spike_counts"].to_numpy())
     n_bouts, n_neurons, n_time_bins = spike_counts.shape
-    if n_time_bins % n_bins != 0:
-        raise ValueError("n_bins must divide the number of original time bins.")
+    if n_time_bins != extraction_edges[1] - extraction_edges[0]:
+        raise ValueError("Saved array length does not match extraction_window_s and dt.")
+    if n_neurons != len(neuron_ids):
+        raise ValueError("Saved neuron IDs do not match the neural array's neuron axis.")
+    analysis_counts = spike_counts[:, :,
+        analysis_edges[0] - extraction_edges[0]:analysis_edges[1] - extraction_edges[0]
+    ]
+    n_analysis_bins = analysis_counts.shape[-1]
+    if n_analysis_bins % n_bins != 0:
+        raise ValueError("n_bins must divide the number of original analysis bins.")
 
-    bins_per_window = n_time_bins // n_bins
+    bins_per_window = n_analysis_bins // n_bins
     window_s = bins_per_window * dt
-    firing_rates = spike_counts.reshape(
+    firing_rates = analysis_counts.reshape(
         n_bouts, n_neurons, n_bins, bins_per_window
     ).sum(axis=-1) / window_s
-    bin_edges_s = np.round(np.arange(n_bins + 1) * window_s - n_time_bins * dt, 12)
+    if baseline_edges is not None:
+        baseline_counts = spike_counts[:, :,
+            baseline_edges[0] - extraction_edges[0]:baseline_edges[1] - extraction_edges[0]
+        ]
+        baseline_rates = baseline_counts.sum(axis=-1) / ((baseline_edges[1] - baseline_edges[0]) * dt)
+        firing_rates -= baseline_rates[:, :, None]
+    bin_edges_s = np.round(np.arange(n_bins + 1) * window_s + analysis_edges[0] * dt, 12)
 
     repeated_bout_ids = np.repeat(session_bouts.index.to_numpy(), n_bins)
     observation_index = pd.MultiIndex.from_arrays(

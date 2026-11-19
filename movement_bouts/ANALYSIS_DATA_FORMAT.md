@@ -39,13 +39,15 @@ bout_id   bin_start_s
 
 Examples of `data` columns:
 
-- Original neuronal responses: neuron IDs, values in spikes/s after temporal averaging.
+- Neuronal responses: neuron IDs, values in spikes/s after temporal averaging,
+  optionally expressed relative to each bout/neuron's earlier baseline rate.
 - PCA: `PC1`, `PC2`, ... (all retained coordinates are saved).
 - A future UMAP analysis can use `UMAP1`, `UMAP2`, ... with the same row index.
 
 Neural arrays are stacked as `(bouts, neurons, windows)`, then transposed to
 `(bouts, windows, neurons)` before forming the observation table. For the inspected
-session 0, 347 bouts, 14 neurons and five windows give `data.shape == (1735, 14)`.
+session 0, 347 bouts, 14 neurons and five windows give `data.shape == (1735, 14)`
+in both raw and baseline-subtracted modes.
 
 `labels` currently retains all columns from `movement_bouts`, except the neural
 `spike_counts` column added by the notebook join. Important fields are:
@@ -67,13 +69,60 @@ premotor window. In particular, `mean_speed` describes the detected movement
 bout, not its preceding premotor window. Position units need verification before
 calling them cm. `final_position` is an observed endpoint, not a planned target.
 
+## Extraction, analysis windows and baseline subtraction
+
+The notebook constants select three intervals relative to movement onset:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| EXTRACTION_WINDOW_S | (-1.2, 0.0) | Raw counts retained at 5 ms resolution |
+| ANALYSIS_WINDOW_S | (-0.5, 0.0) | Interval averaged and passed into PCA |
+| BASELINE_WINDOW_S | (-1.0, -0.5) | Mean rate used for optional correction |
+| ACTIVITY_MODE | "raw" | Alternatively "baseline_subtracted" |
+| N_BINS | 5 | Number of equal windows within ANALYSIS_WINDOW_S |
+
+All intervals are start-inclusive/end-exclusive. `extracted_-1.2_0/` under
+`data/derived/premotor_activity/` contains neuronal_bouts.pkl, neuron_ids_by_session.pkl,
+excluded_bouts.pkl, and parameters.json. Each new raw array is (neurons, 240).
+Metadata records its actual `window_s` and `DT`; use those values when loading.
+The earlier 500 ms extractions and results at the root remain prior outputs.
+Incomplete extractions are skipped with their original bout IDs and a reason.
+
+`prepare_pca_input(..., idx=..., dt=..., n_bins=..., extraction_window_s=...,
+analysis_window_s=..., baseline_window_s=..., activity_mode=...)` first selects
+the analysis interval, then averages its counts into firing rates. The caller
+passes the extraction interval and DT from the saved extraction metadata.
+N_BINS never divides the wider extraction merely because more counts were saved.
+
+In baseline_subtracted mode, each bout and neuron has one baseline rate:
+total baseline spikes / baseline duration. Subtract that value from each of its
+analysis windows. Negative values mean activity below that baseline, in spikes/s.
+This is subtraction, not division or variance standardization. Baseline means are
+computed from retained counts, so changing the baseline within the saved interval
+needs no original recording reload. No extra behavioral columns or baseline rows
+are inserted into the observation tables. Raw mode does not require a baseline.
+
+Windows must align to the original DT and fit within the saved extraction;
+the baseline must end at/before analysis start. N_BINS must divide the number of
+original bins in the analysis interval. The same retained bouts are available to
+both modes. No additional immobility test or displacement filter is introduced.
+
 ## Current saved PCA results
 
-The file `data/derived/premotor_activity/pca/pca_5bins.pkl` (workspace-relative)
-contains the model/result bundle. `N_BINS` determines the filename suffix.
+The selected `run_dir/pca/pca_5bins.pkl` contains the model/result bundle.
+The notebook constructs run_dir once under `data/derived/premotor_activity/runs/`:
+
+- `analysis_-0.5_0_5bins_raw/`
+- `analysis_-0.5_0_5bins_baseline_subtracted_-1_-0.5/`
+
+These names identify analysis bounds, bin count, mode, and baseline bounds when
+used. Each run has pca/ and evaluation/ directories; viewers and evaluations use
+the central pca_path/evaluation_dir variables. Existing root-level caches remain
+available as prior results. Changing preprocessing requires new PCA/evaluation
+fits but no re-extraction while requested windows remain within the saved range.
 
 ```python
-cache = pd.read_pickle(premotor_dir / "pca" / f"pca_{N_BINS}bins.pkl")
+cache = pd.read_pickle(pca_path)
 fit = cache["sessions"][idx][condition]  # condition: 0 or 1
 model = fit["model"]
 results = fit["results"]
@@ -98,12 +147,16 @@ can follow the same index convention with their own coordinate names.
 Other bundle fields include `settings`, `session_info`, and fixed `position_limits`.
 Settings record binning, preprocessing and source-extraction information. Models
 retain neuron order, mean responses, loadings and explained variance.
+Settings additionally record activity_mode, analysis_window_s, baseline_window_s
+(None for raw), extraction_directory and embedded extraction_parameters.
 
 The tracking-projection bundle (`pca_tracking_projection_5bins.pkl`) uses the same
 structure and adds `projection_basis="tracking"`: both conditions use the saved
 tracking model's centering and loadings. Ordinary bundles fit each condition
 separately. Coordinates from separately fitted sessions/conditions have different
 bases, so keep their evaluation results identified by session and condition.
+Projection preparation uses the reference tracking PCA's saved preprocessing and
+extraction settings, including its baseline, rather than current notebook constants.
 
 ## Filtering and evaluation conventions
 
@@ -180,7 +233,7 @@ residual degrees of freedom. These are row-based descriptive diagnostics: they
 read as counts of independent bouts or held-out performance.
 
 Section 18 saves the bundle with `pd.to_pickle()` in
-`data/derived/premotor_activity/evaluation/` (workspace-relative). Filenames end
+the selected run's `evaluation/` directory. Filenames end
 in `_pooled.pkl`, distinguishing them from the superseded window-wise analysis.
 Reload with `pd.read_pickle(path)`; `plot_regression_summary(bundle["summary"])`
 shows one dot per session/PCA, tracking and playback in separate panels. Horizontal
