@@ -258,7 +258,7 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
 
 - Section 15 demonstrates descriptive ordinary linear regression for any numeric
   continuous label using explicitly selected features/coordinates. Default: session
-  0, selected PCs (currently all), initial_position, last window; tracking/playback fitted separately.
+  0, selected PCs, initial_position, last window; tracking/playback fitted separately.
   `fit_label_regression()` returns model, target, in-sample R2/MAE, n_excluded,
   and indexed observed/fitted/residual values. Exclude only missing/nonfinite target
   rows; reject insufficient/constant/nonnumeric targets. No held-out evaluation,
@@ -274,3 +274,31 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   initial_position) > 5`, including both directions and preserving PC/window
   settings. Missing endpoints are excluded. The earlier signed >8 filter was
   corrected to match the goal of excluding bouts ending close to their start.
+
+- Section 18 runs `evaluation.run_label_regressions()` once per session and
+  condition, pooling all premotor windows. The user explicitly rejected the
+  additional per-window batch analysis; do not reintroduce it without discussion.
+  Default: final_position from PC1-PC3, abs(end-start)>5. Summary and fit keys are
+  (idx, condition); prediction tables retain all (bout_id, bin_start_s) rows.
+  Report n_observations and n_bouts separately. Residual degrees of freedom and
+  adjusted R2 use design-row count and do not correct within-bout dependence.
+  Invalid subsets have status/reason; saturated fits have undefined adjusted R2.
+- Batch bundles are saved under `data/derived/premotor_activity/evaluation/` with
+  `_pooled.pkl` suffix and `settings["window_mode"]="pooled"`. Models, predictions
+  and settings are saved together. `plot_regression_summary()` displays one dot
+  per PCA against session idx, with separate tracking/playback panels and mean
+  lines. It rejects the superseded per-window summary format. No fitting occurs
+  in plotting. Sections 15-17 remain the earlier single-window examples.
+
+- Section 19 (`plot_paired_regressions`) matches tracking/playback scores by
+  session idx and plots paired values plus tracking-minus-playback differences.
+  It returns the figure, axes and paired table, including complete finite pairs
+  with status ok only. Default `PAIR_SCORE="r2_adjusted"`; use "r2" for ordinary R2.
+  It reads saved scores without fitting or adding significance tests.
+
+- Section 20 repeats the pooled batch and paired plots for initial_position,
+  reusing section 18 source PCs and feature columns, with NO displacement filter.
+  All bouts with finite initial_position are included, regardless of destination
+  or movement size. Saves a separate all_bouts initial-position bundle; destination
+  fits retain their existing filter. The user explicitly removed this filter from
+  the starting-position analysis.

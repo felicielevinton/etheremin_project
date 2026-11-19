@@ -138,7 +138,7 @@ sessions, conditions or windows automatically. It also works directly with the
 existing `pca_input` and `pca_labels` pair.
 
 The result dictionary contains `model`, `target`, descriptive `r2`, `mae`,
-`n_excluded`, and `predictions`. The latter retains the used observation index
+`n_features`, `df_residual`, `r2_adjusted`, `n_excluded`, and `predictions`. The latter retains the used observation index
 with `observed`, `fitted`, and `residual` (observed minus fitted) columns. Only
 rows with missing/nonfinite target values are omitted. A nonconstant target and
 at least two valid observations are required. Other missing labels are irrelevant.
@@ -149,3 +149,46 @@ to fit, with no standardization, cross-validation or randomization. They do not
 establish significance or prediction of new bouts. Compare the same feature
 counts/windows when interpreting scores; adding predictors can improve an
 in-sample fit without indicating a stronger biological relationship.
+
+## Batch regression and saved evaluation results
+
+`run_label_regressions(cache, target=..., columns=[...], min_displacement=None)`
+fits **one pooled regression per session and condition**, using every premotor
+window together. Windows remain separate observations; they are not averaged.
+An optional cutoff retains `abs(final_position - initial_position) > cutoff`,
+including both displacement directions and excluding unknown endpoints.
+
+The returned bundle has three parts:
+
+- `summary`: a DataFrame indexed by `(idx, condition)`, one row per PCA. It records
+  session identifiers, covered time interval, number of windows, target, counts,
+  R2, adjusted R2, MAE, residual degrees of freedom, status and skip reason.
+  `n_candidates` is before filtering; `n_filtered` counts displacement exclusions;
+  `n_excluded_target` counts invalid targets after filtering. `n_observations`
+  counts bout/window rows, while `n_bouts` counts distinct bouts. Skipped subsets
+  retain their counts but have no fit scores or model.
+- `fits`: a dictionary keyed by `(idx, condition)`. Successful entries contain
+  regression models and prediction tables retaining **all** original
+  `(bout_id, bin_start_s)` observation IDs.
+- `settings`: target, feature columns, cutoff, `window_mode="pooled"`, source PCA
+  settings and representation basis.
+
+Residual degrees of freedom are `n_observations - rank(design including intercept)`.
+Adjusted R2 is `1 - (1-R2)*(n_observations-1)/df_residual`, and is NaN for zero
+residual degrees of freedom. These are row-based descriptive diagnostics: they
+**do not adjust for dependence among windows from the same bout** and must not be
+read as counts of independent bouts or held-out performance.
+
+Section 18 saves the bundle with `pd.to_pickle()` in
+`data/derived/premotor_activity/evaluation/` (workspace-relative). Filenames end
+in `_pooled.pkl`, distinguishing them from the superseded window-wise analysis.
+Reload with `pd.read_pickle(path)`; `plot_regression_summary(bundle["summary"])`
+shows one dot per session/PCA, tracking and playback in separate panels. Horizontal
+colored lines show the unweighted mean across session entries. No time-course,
+confidence interval, resampling, randomization or PCA refitting is introduced.
+
+`plot_paired_regressions(summary, score="r2_adjusted")` matches the two conditions
+by session idx and returns `(figure, axes, paired_table)`. The table contains
+`tracking`, `playback`, and `difference` (tracking minus playback). Both fits must
+be successful with finite scores; incomplete pairs are excluded. Select "r2" for
+ordinary R2. This plots saved results without model fitting or significance tests.
