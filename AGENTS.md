@@ -25,7 +25,8 @@ describe inspected data and should not be assumed to apply to every animal or se
   and tracking/playback rasters, using `psth.py`. It reads original recordings
   with saved movement onsets; extracts [-1.2, +1) s and displays [-0.5, +0.5) s.
   Subtract each bout/neuron's raw mean rate in [-1, -0.7) s, then smooth each
-  corrected trace with Gaussian sigma 20 ms (adjustable, 0 disables), using
+  corrected trace with an adjustable Gaussian sigma (0 disables; read the
+  notebook's current `SMOOTHING_SIGMA_S`), using
   native 5 ms bins. Symmetric smoothing can spread changes across onset.
   Static plots show corrected mean firing rate +/- SEM across complete bouts, red for
   tracking and black for playback. Session/neuron and initial-direction controls
@@ -39,7 +40,44 @@ describe inspected data and should not be assumed to apply to every animal or se
   `POPULATION_SESSION_INDICES` and `POPULATION_DIRECTION` control its scope,
   independently of browser controls. Per-neuron traces and session counts remain
   in memory; source collections are loaded in turn. Units are session-specific.
+  The neuron-type section reuses these traces and matches exact neuron IDs to
+  `../data/df_clus_encoding_phd.pkl`: columns `neuron_idx`, `cluster_encoding`,
+  `angle_rad`, `radius`. Mapping: Motor=0, Sensory=1, Sensorimotor=2, None=3.
+  Four panels show equally weighted unit means +/- SEM with shared axes.
+  Missing classifications are excluded and reported, never assigned to None.
+  The inspected all-session population matches 1,257/1,401 units (345 Motor,
+  126 Sensory, 376 Sensorimotor, 410 None; 144 unclassified). Classification IDs
+  are unique; rerun coverage checks for changed session/data selections.
 - Notebook working directories can vary. Check the kernel's directory when resolving paths.
+
+## Neuron-type PCA notebook
+
+- `movement_bouts/neuron_type_pca.ipynb` reuses the wider premotor extraction and
+  the existing PCA/viewer/evaluation helpers. Its settings cell selects Motor,
+  Sensory, Sensorimotor or None, `MIN_NEURONS` (default 5), and `ACTIVITY_MODE`
+  (`raw` or `baseline_subtracted`, default corrected). Default analysis [-0.5, 0)
+  uses five 100 ms windows; baseline is [-1, -0.7). No PSTH smoothing is applied.
+- Match classification `neuron_idx` exactly to saved neuron IDs, retain recording
+  neuron order, and filter neuron columns before fitting. Missing classifications
+  never enter the None category. Preserve original session and bout indices.
+- Sessions are filtered by selected-type count, not total unit count. The notebook
+  exposes full `session_selection`, `selected_neuron_ids`, and condition-level
+  `pca_fit_summary`; the default Sensorimotor cutoff retains 41 sessions/82 PCAs.
+- Three independent interactive viewers color by initial position, final position,
+  and initial direction (left blue/right red). Each uses separate condition PCAs.
+  Position regressions and direction logistic regression pool all analysis windows
+  per session/condition and show summary plus matched-condition score plots.
+  These reuse descriptive in-sample methods, not significance tests or holdout.
+  Starting position and direction have no displacement filter. Final-position
+  regression defaults to no displacement filter; set
+  `DESTINATION_MIN_DISPLACEMENT=5` for the earlier abs(end-start)>5 comparison.
+- Results are saved under `data/derived/premotor_activity/runs/` with a
+  `neuron_type_{type}_min{cutoff}_analysis_...` prefix, distinct from all-neuron
+  runs. PCA bundles save exact selected IDs, eligibility, classification SHA-256,
+  extraction provenance and preprocessing settings. Recoloring uses saved results.
+  Change the settings and rerun below them to refit; tests in
+  `movement_bouts/test_neuron_type_pca.py` check matching, cutoffs, neuron selection
+  before PCA, and both activity modes using the notebook's actual code cells.
 
 ## Data files and alignment
 

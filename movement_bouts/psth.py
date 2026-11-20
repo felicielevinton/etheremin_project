@@ -109,12 +109,15 @@ def session_neuron_psths(neural_data, bouts, *, dt, window_s, bin_width_s,
 
 
 def plot_population_psth(neuron_psths, centers, *, display_window_s, title,
-                         baseline_subtracted=True, smoothed=True):
+                         baseline_subtracted=True, smoothed=True, ax=None):
     """Average neuron PSTHs equally; shaded SEM is across neuron PSTHs."""
     visible = (centers >= display_window_s[0]) & (centers < display_window_s[1])
     if not visible.any():
         raise ValueError("Display window contains no PSTH bins.")
-    fig, ax = plt.subplots(figsize=(12, 4.5), layout="constrained")
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(12, 4.5), layout="constrained")
+    else:
+        fig = ax.figure
     for condition, name, color in [(0, "Tracking", "red"), (1, "Playback", "black")]:
         values = np.asarray(neuron_psths[condition])
         if values.ndim != 2 or values.shape[1] != len(centers):
@@ -140,6 +143,36 @@ def plot_population_psth(neuron_psths, centers, *, display_window_s, title,
            title=f"{title}\nEqual weight per neuron; shading = SEM across neurons")
     ax.legend()
     return fig, ax
+
+
+def plot_population_psth_by_type(neuron_psths, unit_types, centers, *,
+                                 display_window_s, title, baseline_subtracted=True,
+                                 smoothed=True):
+    """Split indexed per-neuron traces by assigned category, omitting missing labels.
+
+    Type Series must align exactly with each condition's PSTH DataFrame index.
+    The category 'None' is a real classification, distinct from missing labels.
+    """
+    categories = ("Motor", "Sensory", "Sensorimotor", "None")
+    for condition in (0, 1):
+        if not neuron_psths[condition].index.equals(unit_types[condition].index):
+            raise ValueError("Neuron type labels must align with PSTH row indices.")
+        if not unit_types[condition].dropna().isin(categories).all():
+            raise ValueError("Unknown neuron type; use Motor, Sensory, Sensorimotor or None.")
+    fig, axes = plt.subplots(2, 2, figsize=(13, 8), sharex=True, sharey=True,
+                             layout="constrained")
+    for category, ax in zip(categories, axes.flat):
+        selected = {
+            condition: neuron_psths[condition].loc[unit_types[condition].eq(category)]
+            for condition in (0, 1)
+        }
+        plot_population_psth(
+            selected, centers, display_window_s=display_window_s,
+            title=category, baseline_subtracted=baseline_subtracted,
+            smoothed=smoothed, ax=ax,
+        )
+    fig.suptitle(title, fontsize=11)
+    return fig, axes
 
 
 def plot_neuron_psth(counts, labels, *, dt, window_s, bin_width_s, title,

@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
-from psth import prepare_psth_rates, session_neuron_psths
+from psth import prepare_psth_rates, session_neuron_psths, plot_population_psth_by_type
 
 
 class PsthTests(unittest.TestCase):
@@ -56,6 +56,37 @@ class PsthTests(unittest.TestCase):
         tb, _, _ = session_neuron_psths(b, labels.iloc[:1], **settings)
         mean = np.concatenate([ta[0], tb[0]]).mean(axis=0)
         np.testing.assert_allclose(mean, [0, 0, 800, 800])
+
+    def test_type_means_exclude_missing_but_retain_none_category(self):
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        index = pd.MultiIndex.from_tuples(
+            [(0, 'a'), (0, 'b'), (1, 'c'), (1, 'd')], names=['idx', 'neuron_id'])
+        table = pd.DataFrame(np.repeat([[1], [3], [100], [1000]], 4, axis=1), index=index)
+        labels = pd.Series(['Motor', 'Motor', 'None', np.nan], index=index)
+        fig, axes = plot_population_psth_by_type(
+            {0: table, 1: table.iloc[:0]}, {0: labels, 1: labels.iloc[:0]},
+            np.array([-.015, -.005, .005, .015]),
+            display_window_s=(-.02, .02), title='test')
+        try:
+            np.testing.assert_allclose(axes[0, 0].lines[0].get_ydata(), 2)
+            np.testing.assert_allclose(axes[1, 1].lines[0].get_ydata(), 100)
+            # Motor SEM = 1 for the two unit traces [1, 3].
+            vertices = axes[0, 0].collections[0].get_paths()[0].vertices[:, 1]
+            self.assertEqual(vertices.min(), 1)
+            self.assertEqual(vertices.max(), 3)
+            self.assertEqual(axes[0, 1].lines[0].get_label(), 'Tracking: 0 neurons')
+        finally:
+            plt.close(fig)
+
+    def test_type_plot_rejects_reordered_labels(self):
+        import pandas as pd
+        table = pd.DataFrame(np.zeros((2, 4)), index=['a', 'b'])
+        labels = pd.Series(['Motor', 'Sensory'], index=['b', 'a'])
+        with self.assertRaisesRegex(ValueError, 'align'):
+            plot_population_psth_by_type(
+                {0: table, 1: table}, {0: labels, 1: labels},
+                np.arange(4), display_window_s=(0, 4), title='test')
 
 
 if __name__ == "__main__":

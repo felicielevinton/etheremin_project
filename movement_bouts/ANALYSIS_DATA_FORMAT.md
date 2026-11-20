@@ -160,6 +160,24 @@ bases, so keep their evaluation results identified by session and condition.
 Projection preparation uses the reference tracking PCA's saved preprocessing and
 extraction settings, including its baseline, rather than current notebook constants.
 
+## Neuron-type subset runs
+
+`neuron_type_pca.ipynb` keeps this same observation/model/evaluation format.
+After `prepare_pca_input`, it selects neuron columns by exact classification IDs
+before fitting. Its default Sensorimotor selection requires at least five matching
+neurons per session; the type, cutoff, activity mode, analysis and baseline windows
+are editable in one settings cell. Missing classifications are not cluster 3 (None).
+
+Run directories use a `neuron_type_{type}_min{cutoff}_analysis_...` prefix under
+`premotor_activity/runs/`. Additional PCA bundle fields are `selected_neuron_ids`,
+`session_selection` (including ineligible sessions), and `fit_summary`.
+Settings also retain classification-file SHA-256, type mapping, selected type and
+minimum count. The existing `session_info`, `sessions`, `settings`,
+`skipped_sessions` and `position_limits` fields support the same three viewers.
+Position regressions and direction logistic regression use the same saved PCAs,
+with all windows pooled. No displacement filter is enabled by default; the final
+position regression has an optional strict absolute-displacement cutoff.
+
 ## Filtering and evaluation conventions
 
 ```python
