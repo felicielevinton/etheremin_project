@@ -156,7 +156,10 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   `movement_bouts` row index, never reset. Each cell holds an independent array
   shaped `(neurons, original time bins)` of spike counts. The new extraction is
   `[-1.2, 0)` seconds, giving 240 bins at 5 ms resolution, excluding movement onset.
-  Earlier 100-bin files remain at the premotor_activity root as prior outputs.
+  Superseded 100-bin extraction files at the premotor_activity root were removed
+  after verifying every array matched the final 100 bins of the wider extraction,
+  with identical bout indices, neuron IDs, exclusions, and source fingerprints.
+  Load extraction tables and metadata from `extracted_-1.2_0/`.
 - `movement_bouts` remains the reference for all behavioral metadata. Join neural
   rows by index; select a session before stacking arrays, since neuron counts vary.
 - `neuron_ids_by_session.pkl` has a `neuron_ids` column indexed by session `idx`.
@@ -239,6 +242,15 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   typed NumPy arrays. Pass ordinary lists for coordinates, marker colors, text and
   customdata at the interactive plotting boundary. Section 10 exposed this issue;
   regression checks must replay `_js2py_traceDeltas`, not just camera callbacks.
+
+- A populated FigureWidget nested in a VBox can still serialize zero traces:
+  VBox does not invoke the child's `_repr_mimebundle_()` display hook. Call that
+  hook once after populating the initial session and before returning the container.
+  It synchronizes Plotly's _widget_data/_widget_layout with the actual data/layout.
+  This applies to the PCA, bout-trajectory, and endpoint-browser factories. Tests
+  in test_pca_browser.py rebuild figures from get_state(), exercise slider updates,
+  and replay frontend trace/camera events. Constructing the widget without checking
+  its serialized state does not verify that an embedded figure will display.
 
 - Section 12 adds a destination-colored viewer using `color_by="destination"`.
   Colors use saved `final_position` (observed movement endpoint), constant across

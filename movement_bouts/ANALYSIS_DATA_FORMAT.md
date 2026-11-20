@@ -85,7 +85,9 @@ All intervals are start-inclusive/end-exclusive. `extracted_-1.2_0/` under
 `data/derived/premotor_activity/` contains neuronal_bouts.pkl, neuron_ids_by_session.pkl,
 excluded_bouts.pkl, and parameters.json. Each new raw array is (neurons, 240).
 Metadata records its actual `window_s` and `DT`; use those values when loading.
-The earlier 500 ms extractions and results at the root remain prior outputs.
+The superseded root-level 500 ms extraction tables and metadata were removed
+after verifying they matched the final 100 bins of the wider extraction.
+Root-level PCA, evaluation, and figure outputs remain as prior results.
 Incomplete extractions are skipped with their original bout IDs and a reason.
 
 `prepare_pca_input(..., idx=..., dt=..., n_bins=..., extraction_window_s=...,

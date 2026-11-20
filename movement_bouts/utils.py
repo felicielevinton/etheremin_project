@@ -598,6 +598,8 @@ def make_interactive_pca_browser(
     if displacement_filter is not None:
         controls.append(displacement_filter)
     controls.append(figure)
+    # VBox skips the figure's display hook; publish its populated initial state.
+    figure._repr_mimebundle_()
     return widgets.VBox(controls, layout=widgets.Layout(width="100%", overflow="auto"))
 
 
@@ -742,6 +744,8 @@ def make_bout_pca_browser(pca_cache, *, width=1400):
     session_slider.observe(lambda change: show_session(change["new"]), names="value")
     bout_selector.observe(on_bout_change, names="value")
     show_session(session_slider.value)
+    # VBox skips the figure's display hook; publish its populated initial state.
+    figure._repr_mimebundle_()
     return widgets.VBox(
         [session_slider, bout_selector, figure],
         layout=widgets.Layout(width="100%", overflow="auto"),
@@ -827,4 +831,6 @@ def make_start_end_position_browser(movement_bouts, session_info, *, width=1500)
 
     slider.observe(lambda change: show_session(change["new"]), names="value")
     show_session(slider.value)
+    # VBox skips the figure's display hook; publish its populated initial state.
+    figure._repr_mimebundle_()
     return widgets.VBox([slider, figure], layout=widgets.Layout(width="100%", overflow="auto"))
