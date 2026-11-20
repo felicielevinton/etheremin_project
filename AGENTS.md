@@ -30,6 +30,14 @@
   Session pickles checkpoint under `runs/umap_overall_k.../sessions/`; matching
   deterministic settings reuse these embeddings. With random_state=None, create
   a unique timestamped run directory and preserve that realization's models.
+- Session-score plots and paired-difference session axes label animal blocks
+  above headstage blocks using summary metadata. Dotted lines separate animals,
+  lighter dashed lines separate headstages within an animal; alternating subtle
+  shading identifies animal blocks. The PCA and UMAP notebooks refresh evaluation
+  before plotting so existing kernels pick up these changes. Movement-bout
+  session heatmaps also show animal/headstage row separators.
+  Verified saved index blocks: FETA 0-11, HERCULE 12-23, MMELOIK 24-53,
+  NAPOLEON 54-79. Infer boundaries from data, never hard-code these examples.
 - Overall metrics reuse evaluation.py with UMAP1-3: pooled initial/final-position
   linear regression (adjusted R2 default) and initial-direction logistic regression
   (balanced accuracy, scaler/L2/balanced weights). Final-position displacement

@@ -384,3 +384,13 @@ pipeline as PCA. All premotor windows are pooled. These are in-sample descriptiv
 scores, not significance tests; adjusted R2 does not account for dependence of
 windows within bouts. No displacement filter applies to initial position or
 direction; final-position filtering is optional (default None).
+
+
+Session-score overview plots and paired-difference session axes derive contiguous
+animal and headstage blocks from the summary's `animal` and `headstage` columns.
+Animal names and hs labels occupy separate rows above the numeric session axis.
+Dotted lines mark animal boundaries; lighter dashed lines mark headstage changes
+within an animal. Missing/failed scores do not remove source metadata boundaries.
+This shared display is used by the all-neuron PCA, neuron-type PCA and UMAP
+notebooks. Movement-bout heatmaps show equivalent separators in displayed-row
+coordinates, preserving their existing preference for one headstage per recording.

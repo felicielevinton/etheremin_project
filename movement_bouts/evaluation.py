@@ -343,6 +343,55 @@ def run_label_regressions(pca_cache, *, target, columns, min_displacement=None):
     }
 
 
+def _annotate_session_animals(ax, summary):
+    """Label animal/headstage blocks from actual session metadata, including skips."""
+    if "animal" not in summary.columns:
+        return
+    fields = ["idx", "animal"] + (["headstage"] if "headstage" in summary else [])
+    sessions = summary.reset_index()[fields].drop_duplicates().sort_values("idx")
+    if sessions.empty:
+        return
+    if sessions["idx"].duplicated().any():
+        raise ValueError("Each session idx must identify exactly one animal/headstage.")
+    positions = sessions["idx"].to_numpy(dtype=float)
+    animals = sessions["animal"].fillna("Unknown").astype(str).to_numpy()
+    starts = np.r_[0, np.flatnonzero(animals[1:] != animals[:-1]) + 1]
+    ends = np.r_[starts[1:] - 1, len(animals) - 1]
+    centers, labels = [], []
+    for group, (start, end) in enumerate(zip(starts, ends)):
+        left = (positions[start-1] + positions[start])/2 if start else positions[start] - .5
+        right = (positions[end] + positions[end+1])/2 if end+1 < len(animals) else positions[end] + .5
+        if group % 2 == 0:
+            ax.axvspan(left, right, color=".5", alpha=.08, zorder=0)
+        if start:
+            ax.axvline(left, color=".55", linestyle=":", linewidth=1, zorder=0)
+        centers.append((left + right)/2)
+        labels.append(animals[start])
+    has_headstages = "headstage" in sessions
+    animal_axis = ax.secondary_xaxis(1.065 if has_headstages else 1.0)
+    animal_axis.set_xticks(centers, labels)
+    animal_axis.tick_params(axis="x", length=0, labelsize=9, pad=4)
+    animal_axis.spines["top"].set_visible(False)
+    if has_headstages:
+        headstages = sessions["headstage"].fillna("?").astype(str).to_numpy()
+        changes = (animals[1:] != animals[:-1]) | (headstages[1:] != headstages[:-1])
+        hs_starts = np.r_[0, np.flatnonzero(changes) + 1]
+        hs_ends = np.r_[hs_starts[1:] - 1, len(animals) - 1]
+        hs_centers, hs_labels = [], []
+        for start, end in zip(hs_starts, hs_ends):
+            left = (positions[start-1] + positions[start])/2 if start else positions[start] - .5
+            right = (positions[end] + positions[end+1])/2 if end+1 < len(animals) else positions[end] + .5
+            if start and animals[start] == animals[start-1]:
+                ax.axvline(left, color=".65", linestyle="--", linewidth=.8, zorder=0)
+            hs_centers.append((left + right)/2)
+            hs_labels.append(f"hs{headstages[start]}")
+        hs_axis = ax.secondary_xaxis("top")
+        hs_axis.set_xticks(hs_centers, hs_labels)
+        hs_axis.tick_params(axis="x", length=0, labelsize=8, labelcolor=".4", pad=3)
+        hs_axis.spines["top"].set_visible(False)
+    ax.set_title(ax.get_title(), pad=46 if has_headstages else 28)
+
+
 def plot_regression_summary(summary, *, score="r2_adjusted", representation="PCA"):
     """Plot linear/logistic scores per session/condition, without window splitting."""
     import matplotlib.pyplot as plt
@@ -369,6 +418,7 @@ def plot_regression_summary(summary, *, score="r2_adjusted", representation="PCA
         ax.set(title=f"{name}: one point per {representation}", xlabel="Session entry (idx)", ylabel=ylabel)
         if score == "balanced_accuracy":
             ax.set_ylim(-0.02, 1.02)
+        _annotate_session_animals(ax, summary)
     fig.tight_layout()
     return fig, axes
 
@@ -421,6 +471,7 @@ def plot_paired_regressions(summary, *, score="r2_adjusted"):
         title="Within-session differences\nPositive = higher tracking score",
     )
     axes[1].legend(frameon=False)
+    _annotate_session_animals(axes[1], summary)
     fig.tight_layout()
     return fig, axes, paired
 
