@@ -8,6 +8,149 @@ import numpy as np
 import pandas as pd
 
 
+NEURON_TYPE_COLORS = {
+    "Sensorimotor": "#9BD77B",  # light green
+    "Motor": "#2878B5",         # blue
+    "Sensory": "#E6C62E",       # yellow
+    "None": "#8B8B8B",          # gray
+    "All neurons": "#303030",
+}
+
+
+def pair_neuron_group_scores(summary, *, score, reference_group="All neurons"):
+    """Match each group's valid scores to a reference by session AND condition.
+
+    Summary uses unique (group, idx, condition) rows. Failed/nonfinite fits are
+    omitted. When supplied, observation and bout counts must match within pairs.
+    Return group score, reference score, difference, and neuron/sample counts.
+    """
+    if summary.index.names != ["group", "idx", "condition"] or not summary.index.is_unique:
+        raise ValueError("Use a unique summary indexed by (group, idx, condition).")
+    if reference_group not in summary.index.get_level_values("group"):
+        raise ValueError(f"Missing reference group: {reference_group}")
+    valid = summary.loc[summary["status"].eq("ok") & np.isfinite(summary[score])]
+    fields = [score] + [c for c in ("n_neurons", "n_observations", "n_bouts") if c in summary]
+    reference = valid.loc[valid.index.get_level_values("group") == reference_group, fields].droplevel("group")
+    reference = reference.rename(columns={c: "reference_" + c for c in fields})
+    pairs = []
+    for group in summary.index.get_level_values("group").unique():
+        if group == reference_group:
+            continue
+        selected = valid.loc[valid.index.get_level_values("group") == group, fields].droplevel("group")
+        matched = selected.join(reference, how="inner", validate="one_to_one")
+        for count in ("n_observations", "n_bouts"):
+            if count in matched and not matched[count].eq(matched["reference_" + count]).all():
+                raise ValueError(f"Matched {group}/{reference_group} fits have different {count}.")
+        matched = matched.rename(columns={score: "group_score", "reference_" + score: "reference_score"})
+        matched["difference"] = matched["group_score"] - matched["reference_score"]
+        matched["group"] = group
+        pairs.append(matched.reset_index().set_index(["group", "idx", "condition"]))
+    if pairs:
+        return pd.concat(pairs).sort_index()
+    return pd.DataFrame(columns=["group_score", "reference_score", "difference"],
+                        index=pd.MultiIndex.from_arrays([[], [], []], names=["group", "idx", "condition"]))
+
+
+def plot_neuron_group_comparison(summary, *, score, reference_group="All neurons", group_colors=None):
+    """Plot matched scores/differences, with neuron-type colors in both conditions."""
+    import matplotlib.pyplot as plt
+
+    pairs = pair_neuron_group_scores(summary, score=score, reference_group=reference_group)
+    groups = [g for g in summary.index.get_level_values("group").unique() if g != reference_group]
+    colors = {**NEURON_TYPE_COLORS, **(group_colors or {})}
+    label = {"r2": "R-squared", "r2_adjusted": "Adjusted R-squared",
+             "balanced_accuracy": "Balanced accuracy"}.get(score, score)
+    fig, axes = plt.subplots(2, 2, figsize=(13, 9), layout="constrained")
+    for col, (condition, name) in enumerate(((0, "Tracking"), (1, "Playback"))):
+        rows = pairs.loc[pairs.index.get_level_values("condition") == condition]
+        markers = ("o", "s", "^", "D", "v", "P")
+        for i, group in enumerate(groups):
+            color = colors.get(group, "#666666")
+            selected = rows.loc[rows.index.get_level_values("group") == group]
+            axes[0, col].scatter(selected["reference_score"], selected["group_score"],
+                                 color=color, edgecolors="0.25", linewidths=.4,
+                                 marker=markers[i % len(markers)], s=30, alpha=.85,
+                                 label=f"{group} (n={len(selected)})")
+            # Fixed offsets only separate coincident points; they encode no data.
+            offsets = np.linspace(-.12, .12, len(selected)) if len(selected) > 1 else np.zeros(len(selected))
+            axes[1, col].scatter(i + offsets, selected["difference"], color=color,
+                                edgecolors="0.25", linewidths=.4, s=24, alpha=.85)
+            if len(selected):
+                axes[1, col].plot([i-.22, i+.22], [selected["difference"].mean()]*2, color=color, linewidth=2)
+        if len(rows):
+            lo = min(rows["reference_score"].min(), rows["group_score"].min())
+            hi = max(rows["reference_score"].max(), rows["group_score"].max())
+            pad = max((hi-lo)*.07, .005)
+            axes[0, col].plot([lo-pad, hi+pad], [lo-pad, hi+pad], "--", color="0.5", linewidth=.8)
+        else:
+            axes[0, col].text(.5, .5, "No valid matched scores", ha="center", transform=axes[0, col].transAxes)
+        axes[0, col].set(title=f"{name}: matched session scores", xlabel=f"{reference_group}: {label}",
+                          ylabel=f"Neuron type: {label}")
+        axes[0, col].legend(fontsize=8)
+        axes[1, col].axhline(0, color="0.5", linestyle="--", linewidth=.8)
+        counts = [int((rows.index.get_level_values("group") == group).sum()) for group in groups]
+        axes[1, col].set(xticks=range(len(groups)),
+                          xticklabels=[f"{group}\nn={n}" for group, n in zip(groups, counts)],
+                          ylabel=f"Type - {reference_group} ({label})",
+                          title="One dot per matched session; bars = paired mean difference")
+        for tick, group in zip(axes[1, col].get_xticklabels(), groups):
+            tick.set_bbox(dict(facecolor=colors.get(group, "#666666"), edgecolor="none", alpha=.4, pad=2))
+    return fig, axes, pairs
+
+
+def plot_neuron_group_pairwise(summary, *, score, group_colors=None):
+    """Heatmaps of paired mean score differences, with explicit pair counts.
+
+    Each cell matches that pair's own eligible valid sessions within condition.
+    Positive values favor the row group. No common-all-groups restriction is used.
+    """
+    import matplotlib.pyplot as plt
+
+    groups = summary.index.get_level_values("group").unique().tolist()
+    colors = {**NEURON_TYPE_COLORS, **(group_colors or {})}
+    records = []
+    for reference in groups:
+        pairs = pair_neuron_group_scores(summary, score=score, reference_group=reference)
+        for condition in (0, 1):
+            for group in groups:
+                if group == reference:
+                    rows = summary.loc[(summary.index.get_level_values("group") == group)
+                                       & (summary.index.get_level_values("condition") == condition)]
+                    n = int((rows["status"].eq("ok") & np.isfinite(rows[score])).sum())
+                    mean = 0.0 if n else np.nan
+                else:
+                    rows = pairs.loc[(pairs.index.get_level_values("group") == group)
+                                     & (pairs.index.get_level_values("condition") == condition)]
+                    n = len(rows)
+                    mean = rows["difference"].mean() if n else np.nan
+                records.append(dict(condition=condition, group_a=group, group_b=reference,
+                                    n_pairs=n, mean_difference=mean))
+    table = pd.DataFrame(records).set_index(["condition", "group_a", "group_b"])
+    values = table["mean_difference"].dropna().abs()
+    limit = max(float(values.max()) if len(values) else 0, .001)
+    fig, axes = plt.subplots(1, 2, figsize=(13, 6), layout="constrained")
+    for ax, condition, name in zip(axes, (0, 1), ("Tracking", "Playback")):
+        rows = table.xs(condition, level="condition")
+        matrix = rows["mean_difference"].unstack("group_b").reindex(index=groups, columns=groups)
+        counts = rows["n_pairs"].unstack("group_b").reindex(index=groups, columns=groups)
+        plotted = ax.imshow(matrix.to_numpy(), cmap="RdBu_r", vmin=-limit, vmax=limit)
+        for i in range(len(groups)):
+            for j in range(len(groups)):
+                value, n = matrix.iloc[i, j], int(counts.iloc[i, j])
+                text = f"{value:+.3f}\nn={n}" if np.isfinite(value) else "No pairs\nn=0"
+                ax.text(j, i, text, ha="center", va="center", fontsize=8,
+                        color="white" if np.isfinite(value) and abs(value) > limit*.6 else "black")
+        ax.set(xticks=range(len(groups)), xticklabels=groups, yticks=range(len(groups)),
+               yticklabels=groups, title=name, xlabel="Column group", ylabel="Row group")
+        ax.tick_params(axis="x", labelrotation=35)
+        # Group identity belongs to the labels; cell colors still encode differences.
+        for ticks in (ax.get_xticklabels(), ax.get_yticklabels()):
+            for tick, group in zip(ticks, groups):
+                tick.set_bbox(dict(facecolor=colors.get(group, "#666666"), edgecolor="none", alpha=.4, pad=2))
+    fig.colorbar(plotted, ax=axes, label=f"Paired mean difference in {score}: row - column", shrink=.8)
+    return fig, axes, table
+
+
 def validate_data_labels(data, labels):
     """Check the observation format without changing either table.
 
@@ -193,12 +336,14 @@ def run_label_regressions(pca_cache, *, target, columns, min_displacement=None):
             "displacement_rule": "abs(final_position - initial_position) > cutoff",
             "window_mode": "pooled", "scoring": "descriptive_in_sample",
             "projection_basis": pca_cache.get("projection_basis", "separate_condition_pcas"),
-            "pca_settings": dict(pca_cache.get("settings", {})),
+            ("representation_settings" if pca_cache.get("representation") == "UMAP" else "pca_settings"):
+                dict(pca_cache.get("settings", {})),
+            "representation": pca_cache.get("representation", "PCA"),
         },
     }
 
 
-def plot_regression_summary(summary, *, score="r2_adjusted"):
+def plot_regression_summary(summary, *, score="r2_adjusted", representation="PCA"):
     """Plot linear/logistic scores per session/condition, without window splitting."""
     import matplotlib.pyplot as plt
 
@@ -221,7 +366,7 @@ def plot_regression_summary(summary, *, score="r2_adjusted"):
         else:
             ax.text(0.5, 0.5, "No valid scores", ha="center", transform=ax.transAxes)
         ax.axhline(reference, color="gray", linestyle="--", linewidth=0.8)
-        ax.set(title=f"{name}: one point per PCA", xlabel="Session entry (idx)", ylabel=ylabel)
+        ax.set(title=f"{name}: one point per {representation}", xlabel="Session entry (idx)", ylabel=ylabel)
         if score == "balanced_accuracy":
             ax.set_ylim(-0.02, 1.02)
     fig.tight_layout()
@@ -402,7 +547,9 @@ def run_direction_logistics(pca_cache, *, columns, C=1.0):
             "valid_directions": [-1, 1], "window_mode": "pooled",
             "min_displacement": None, "scoring": "descriptive_in_sample",
             "projection_basis": pca_cache.get("projection_basis", "separate_condition_pcas"),
-            "pca_settings": dict(pca_cache.get("settings", {})),
+            ("representation_settings" if pca_cache.get("representation") == "UMAP" else "pca_settings"):
+                dict(pca_cache.get("settings", {})),
+            "representation": pca_cache.get("representation", "PCA"),
         },
     }
 

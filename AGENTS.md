@@ -1,5 +1,45 @@
 # eTheremin project context
 
+## Focused UMAP comparison
+
+- `movement_bouts/premotor_umap.ipynb` compares one session's all-neuron raw and
+  baseline-subtracted rates in four independent 3D UMAP panels: tracking/playback
+  columns, activity-mode rows. Two independent figures reuse identical embeddings:
+  initial-position colors (fixed global scale) and initial-direction colors
+  (left blue, right red, unknown gray). Both use larger circles; missing position
+  is gray in the position view. No z-scoring, smoothing, behavioral supervision or PCA step.
+- Reuse `prepare_pca_input` with analysis [-0.5, 0), 5 bins, baseline [-1, -0.7).
+  Verify extraction source hashes and preserve identical bout/window IDs across
+  modes. Defaults: session 0, 30 neighbors, min_dist 0.1, Euclidean, seed 42;
+  try 15/60 neighbors and other seeds by changing settings and rerunning.
+- `umap_analysis.py` separates fitting from plotting. Small conditions are
+  explicitly skipped when n_observations <= n_neighbors, never silently retuned.
+  Embeddings have unrelated axes. Results remain descriptive; windows within
+  a bout are dependent. UMAP uses random initialization, one thread, and explicit
+  compatibility_layout=True to retain the installed 0.6 legacy layout behavior.
+- Rotatable Plotly position/direction figures use larger outlined circles; static Matplotlib 3D PNGs
+  provide a preview. Interactive HTML, pickles and PNGs save under
+  `premotor_activity/runs/umap_raw_vs_baseline/` with a `umap3d_` prefix and
+  session, neighbors, seed and settings digest. Bundles retain model/results,
+  exact neuron order, counts, extraction provenance and settings. Tests in
+  `test_umap_analysis.py` check fit inputs, indices, small subsets and plotting.
+
+
+- The notebook's overall section fits all 80 saved sessions by default
+  (`OVERALL_SESSION_INDICES=None`), separately for raw/baseline-subtracted modes.
+  Session pickles checkpoint under `runs/umap_overall_k.../sessions/`; matching
+  deterministic settings reuse these embeddings. With random_state=None, create
+  a unique timestamped run directory and preserve that realization's models.
+- Overall metrics reuse evaluation.py with UMAP1-3: pooled initial/final-position
+  linear regression (adjusted R2 default) and initial-direction logistic regression
+  (balanced accuracy, scaler/L2/balanced weights). Final-position displacement
+  cutoff defaults None; starting position and direction never use this filter.
+  Save models, indexed predictions, summaries, paired tables and PNGs in evaluation/.
+  Raw/corrected metrics remain separate, descriptive/in-sample, with no significance
+  tests. Embedding skips are retained in embedding_fit_summary. UMAP evaluation
+  metadata uses representation_settings and separate_condition_umaps basis;
+  plot_regression_summary(..., representation="UMAP") labels plots correctly.
+
 These notes record discoveries and user decisions from exploratory work in November 2026.
 Inspect the actual files and notebook settings when continuing an analysis. Examples below
 describe inspected data and should not be assumed to apply to every animal or session.
@@ -8,6 +48,10 @@ describe inspected data and should not be assumed to apply to every animal or se
 
 - Prefer direct access such as `features[session][column]` over extra intermediate feature tables.
 - Use red for tracking and black for playback, including mean lines and shaded bands.
+- In common neuron-group comparison graphs, color identifies type instead:
+  Sensorimotor light green, Motor blue, Sensory yellow, None gray. Conditions use
+  separate panels. Pairwise heatmap labels use these type colors; cell colors
+  continue to encode signed score differences.
 - Static Matplotlib plots work well. `%matplotlib widget` was slow and had widget-rendering
   problems in VS Code. The working event browser uses ipywidgets controls to redraw static
   figures when sliders are released (`continuous_update=False`).
@@ -55,7 +99,7 @@ describe inspected data and should not be assumed to apply to every animal or se
 - `movement_bouts/neuron_type_pca.ipynb` reuses the wider premotor extraction and
   the existing PCA/viewer/evaluation helpers. Its settings cell selects Motor,
   Sensory, Sensorimotor or None, `MIN_NEURONS` (default 5), and `ACTIVITY_MODE`
-  (`raw` or `baseline_subtracted`, default corrected). Default analysis [-0.5, 0)
+  (`raw` or `baseline_subtracted`; inspect the current settings). Analysis [-0.5, 0)
   uses five 100 ms windows; baseline is [-1, -0.7). No PSTH smoothing is applied.
 - Match classification `neuron_idx` exactly to saved neuron IDs, retain recording
   neuron order, and filter neuron columns before fitting. Missing classifications
@@ -78,6 +122,36 @@ describe inspected data and should not be assumed to apply to every animal or se
   Change the settings and rerun below them to refit; tests in
   `movement_bouts/test_neuron_type_pca.py` check matching, cutoffs, neuron selection
   before PCA, and both activity modes using the notebook's actual code cells.
+
+## Neuron-group comparison notebook
+
+- `movement_bouts/neuron_group_comparison.ipynb` is the standalone matched
+  comparison of Motor, Sensory, Sensorimotor, None and All neurons, moved out of
+  the single-type PCA notebook. It has its own input loading and preprocessing
+  settings; it does not require an existing single-type PCA cache or kernel state.
+  It prepares each session once, refits each eligible population, and uses the
+  same PC predictors, target filters and classifier settings for every group.
+  Full-session references include unclassified neurons. Single-type results
+  remain separate, with a link to this comparison notebook.
+- `comparison_eligibility`, `comparison_pca_groups`, `comparison_evaluations` and
+  `comparison_scores` retain membership, models, indexed predictions and skipped
+  cases. Successful type/reference fits must have identical prediction indices.
+  At cutoff 5 there are 30 Motor, 4 Sensory, 41 Sensorimotor and 40 None sessions;
+  no session qualifies for all four types. Compare each pair's shared sessions
+  within condition, not global group means or an intersection of all groups.
+- `evaluation.pair_neuron_group_scores`, `plot_neuron_group_comparison` and
+  `plot_neuron_group_pairwise` provide type-vs-full scores/differences and pairwise
+  mean-difference heatmaps with explicit pair counts. Only successful finite
+  scores enter a pair. Observation/bout counts must agree. The comparison remains
+  descriptive and does not control neuron count or introduce significance tests.
+- Comparison models and evaluation bundles are saved separately in
+  `runs/neuron_group_comparison_min{cutoff}_analysis_.../`; evaluation filenames
+  identify selected PCs, destination filter and logistic C. Unit tests in
+  `test_neuron_group_comparison.py` check matching, exclusions, sample agreement,
+  pairwise difference signs and missing/empty subsets.
+- `evaluation.NEURON_TYPE_COLORS` sets the requested type palette. Both common
+  plot helpers accept `group_colors`; the comparison notebook exposes GROUP_COLORS
+  and saves it in evaluation settings. Recolor/replot saved scores without fitting.
 
 ## Data files and alignment
 

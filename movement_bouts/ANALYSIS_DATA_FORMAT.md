@@ -178,6 +178,41 @@ Position regressions and direction logistic regression use the same saved PCAs,
 with all windows pooled. No displacement filter is enabled by default; the final
 position regression has an optional strict absolute-displacement cutoff.
 
+### Matched comparisons between neuron populations
+
+`neuron_group_comparison.ipynb` independently loads the source tables and fits
+each type and the full original neuron set using identical preprocessing and
+observation rows. Its own settings control type groups, cutoff and activity mode;
+no single-type PCA run is required. `neuron_type_pca.ipynb` links to this notebook.
+All neurons includes units without a type label. Type eligibility uses the chosen
+minimum neuron count; full-session references need the requested PC dimensions.
+Each population retains the standard PCA/evaluation bundle structure.
+
+`comparison_scores[target]` concatenates evaluation summaries with unique
+`(group, idx, condition)` indices and an added `n_neurons` column. Skipped and
+ineligible subsets remain explicit. For each target, matched successful
+type/full-session predictions must have identical observation indices.
+`pair_neuron_group_scores(summary, score=..., reference_group=...)` matches by
+session and condition, excludes failed/nonfinite fits, and checks equal sample
+counts. It returns group/reference scores, differences and neuron/sample counts
+without fitting or testing significance. Negative differences favor the reference.
+
+Every pair uses its own shared sessions. At the five-neuron cutoff, the four type
+eligibilities have no common session, so an all-groups intersection is unsuitable.
+`plot_neuron_group_comparison` shows matched scores and differences from the full
+session; `plot_neuron_group_pairwise` shows mean row-minus-column differences and
+pair counts. Neuron counts differ and are not controlled by subsampling.
+Common score/difference plots use Sensorimotor light green, Motor blue, Sensory
+yellow and None gray in both condition panels. Heatmap group labels use the same
+palette, while cell color remains the numerical difference scale. GROUP_COLORS
+is editable and saved with the comparison settings; recoloring needs no refit.
+
+`runs/neuron_group_comparison_min{cutoff}_analysis_.../pca_groups.pkl` holds each
+population's models and labeled coordinates. Its evaluation pickle contains
+`settings`, `evaluations`, `scores`, `eligibility`, `paired_to_all` and `pairwise`.
+Filenames identify PC columns, destination filter and logistic C; preprocessing,
+classification/extraction provenance and exact neuron IDs are retained.
+
 ## Filtering and evaluation conventions
 
 ```python
@@ -300,3 +335,52 @@ _pooled.pkl` under the premotor activity directory. Existing plotting helpers
 `score="balanced_accuracy"`. Absolute-score plots have a 0.5 reference; the
 tracking-minus-playback difference plot has a zero reference. No model fitting
 occurs in either plotting helper.
+
+
+## Focused raw/baseline UMAP comparison
+
+`premotor_umap.ipynb` prepares the same neural-rate/label pairs with
+`prepare_pca_input`, using five windows over [-0.5, 0) s and a [-1, -0.7) s
+baseline. All recorded neuron columns retain their original order. Separate
+3D UMAPs are fitted per condition and activity mode, without z-scoring,
+PCA preprocessing or behavioral targets. Results use `UMAP1`, `UMAP2` and `UMAP3`
+joined to the unchanged labels and `(bout_id, bin_start_s)` index.
+
+The bundle has `fits[activity_mode][condition]` entries containing `model`,
+`results` and `neuron_ids`. `fit_summary` is indexed by activity_mode/condition
+with observation, bout and neuron counts, neighborhood size, status and reason.
+A condition with n_observations <= n_neighbors is skipped explicitly.
+`settings` records session, both modes, preprocessing, UMAP parameters/version,
+seed and extraction provenance; `session_info` and `position_limits` support
+plotting. Files live in `runs/umap_raw_vs_baseline/`, with session, neighbors,
+seed and an effective-settings digest in the filename. The notebook saves the
+pickle, four-panel 3D PNG and rotatable Plotly HTML together, with a `umap3d_` filename prefix. Two independent figures reuse the same coordinates: position colors and direction colors (left blue, right red, unknown gray), both with circles. PNG/HTML filenames end in `_position` or `_direction`. Plotting only consumes saved coordinates.
+Panel coordinate systems are independent; these are exploratory embeddings,
+not cross-condition distances or independent observations across bout windows.
+
+
+### Overall UMAP evaluations
+
+The overall section of `premotor_umap.ipynb` fits each saved session's two
+conditions separately for both raw and baseline-subtracted activity. Default
+scope is all sessions; `OVERALL_SESSION_INDICES` can select a subset. Each mode
+uses the existing `sessions[idx][condition]` evaluation interface with labeled
+UMAP1-3 coordinates. Metadata sets `representation="UMAP"`,
+`projection_basis="separate_condition_umaps"`, and `representation_settings`
+(the PCA interface continues to use `pca_settings`).
+
+`runs/umap_overall_k.../sessions/session_{idx}.pkl` checkpoints both modes'
+models, neuron IDs, coordinates and fit summaries, with exact run settings.
+`embedding_fit_summary.pkl` retains every mode/session/condition, including
+missing or insufficient extractions. Setting random_state=None gives each
+batch a unique run directory; saved models identify the realized embedding.
+
+`evaluation/` saves separate pooled initial/final-position regression and
+direction-logistic bundles per mode, with a digest of evaluation settings,
+summary and paired-score PNGs, and matched tracking/playback tables. Missing
+positions and unknown directions are excluded per target. Position regressions
+are ordinary linear fits; direction uses the same scaler + balanced L2 logistic
+pipeline as PCA. All premotor windows are pooled. These are in-sample descriptive
+scores, not significance tests; adjusted R2 does not account for dependence of
+windows within bouts. No displacement filter applies to initial position or
+direction; final-position filtering is optional (default None).
