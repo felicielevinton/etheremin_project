@@ -21,6 +21,24 @@ describe inspected data and should not be assumed to apply to every animal or se
 - `felicie/load_data.ipynb` and `felicie/utils_load_data.py` are Felicie's original material.
 - `notebooks/explore_data.ipynb` contains the user's exploration and event-response analyses.
 - `movement_bouts/analyse_movement_bouts.ipynb` contains the movement-bout analysis.
+- `movement_bouts/perimotor_psth.ipynb` browses single-neuron onset-aligned PSTHs
+  and tracking/playback rasters, using `psth.py`. It reads original recordings
+  with saved movement onsets; extracts [-1.2, +1) s and displays [-0.5, +0.5) s.
+  Subtract each bout/neuron's raw mean rate in [-1, -0.7) s, then smooth each
+  corrected trace with Gaussian sigma 20 ms (adjustable, 0 disables), using
+  native 5 ms bins. Symmetric smoothing can spread changes across onset.
+  Static plots show corrected mean firing rate +/- SEM across complete bouts, red for
+  tracking and black for playback. Session/neuron and initial-direction controls
+  redraw on change (sliders on release). One source collection is cached; only
+  selected-neuron windows are copied. Bounds failures are excluded and counted.
+  Conditions are assigned at onset; transition-crossing windows are not filtered.
+  This notebook writes no derived data and does not use the pre-onset extraction.
+  Its population section computes each neuron's condition PSTH across bouts,
+  then averages neurons equally across all saved sessions by default. Population
+  shading is SEM across recorded unit PSTHs, not bouts or independent animals.
+  `POPULATION_SESSION_INDICES` and `POPULATION_DIRECTION` control its scope,
+  independently of browser controls. Per-neuron traces and session counts remain
+  in memory; source collections are loaded in turn. Units are session-specific.
 - Notebook working directories can vary. Check the kernel's directory when resolving paths.
 
 ## Data files and alignment
