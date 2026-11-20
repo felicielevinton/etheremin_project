@@ -500,3 +500,27 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   score="balanced_accuracy", with 0.5 absolute-score and zero difference references.
   These remain in-sample descriptive scores; no holdout, randomization or
   significance tests were requested. Sections 18-21 keep their prior behavior.
+
+
+## Neuron-type composition by animal/headstage
+
+- `movement_bouts/neuron_type_composition.ipynb` is a standalone count audit for
+  the saved PCA/UMAP session scope. Load only session_info, saved neuron-axis IDs,
+  extraction parameters and df_clus_encoding_phd.pkl; verify session-table hash.
+  No spike arrays, embeddings or evaluations are fitted or changed.
+- Exact-ID classification mapping: Motor=0, Sensory=1, Sensorimotor=2, None=3;
+  unmatched IDs are Unclassified (white hatched bars), never None (gray).
+  Keep standard neuron-type palette, all recorded neurons, original idx values,
+  neuron-axis order, and explicit classification coverage. SESSION_INDICES can
+  subset sessions, with all saved sessions as default.
+- Counts describe recorded session-unit entries, not neurons tracked across days.
+  Do not double count conditions, activity modes or premotor windows. Display
+  per-session counts/percentages, animal/headstage totals and pooled percentages,
+  equally weighted mean session percentages, and animal totals. Denominators
+  include unclassified units. Pooled fractions and mean session fractions differ.
+- Separate coverage table lists entirely unclassified sessions; inspected idxs
+  36,37,50,51,52,53,66,79 have no matched IDs. Recompute for new classifications.
+  Current totals: 1,401 session-unit entries, 1,257 matched, 144 unclassified.
+- Save tables/inventory/provenance in data/derived/neuron_type_composition/{digest}/
+  as pickle, JSON settings and two PNGs. Models and performance files are untouched.
+  Composition may contextualize performance, but does not establish causation.
