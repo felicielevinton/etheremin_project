@@ -84,8 +84,45 @@ def project_pc_psths(neural_data, neuron_ids, bouts, mode_fits, *, dt,
     return result
 
 
+def summarize_pc_psths(result):
+    """Reduce one projected session to all/left/right display summaries.
+
+    Retain mean/SEM, counts, bout IDs, and references to the fixed models, but no
+    per-bout score arrays or source recordings. Directions are selected after
+    projection, which gives exactly the same traces as projecting each subset.
+    Unknown directions enter only the all-directions summary.
+    """
+    summaries = {}
+    for direction in (None, -1, 1):
+        labels = result["labels"]
+        excluded = result["excluded_bouts"]
+        selected_labels = labels if direction is None else labels.loc[labels["initial_direction"].eq(direction)]
+        selected_excluded = excluded if direction is None else excluded.loc[excluded["initial_direction"].eq(direction)]
+        summary = {"settings": {**result["settings"], "direction": direction},
+                   "centers_s": result["centers_s"], "neuron_ids": result["neuron_ids"],
+                   "n_complete_bouts": len(selected_labels), "n_excluded_bouts": len(selected_excluded),
+                   "modes": {}}
+        if "session_info" in result:
+            summary["session_info"] = result["session_info"]
+        for mode, values in result["modes"].items():
+            summary["modes"][mode] = {"model": values["model"], "conditions": {}}
+            for condition, original in values["conditions"].items():
+                ids = pd.Index(original["bout_ids"])
+                keep = ids.isin(selected_labels.index)
+                traces = original["bout_scores"][keep]
+                n = len(traces)
+                shape = original["mean"].shape
+                summary["modes"][mode]["conditions"][condition] = {
+                    "bout_ids": ids[keep].tolist(), "n_bouts": n,
+                    "mean": traces.mean(axis=0) if n else np.full(shape, np.nan),
+                    "sem": traces.std(axis=0, ddof=1)/np.sqrt(n) if n > 1 else np.full(shape, np.nan),
+                }
+        summaries[direction] = summary
+    return summaries
+
+
 def plot_pc_psths(result, *, display_window_s=(-.5, .5), title=""):
-    """Draw first PCs using a common tracking basis within each activity mode."""
+    """Draw PC time courses with one signed loading bar per recorded unit."""
     import matplotlib.pyplot as plt
 
     centers = result["centers_s"]
@@ -95,11 +132,31 @@ def plot_pc_psths(result, *, display_window_s=(-.5, .5), title=""):
     if not visible.any():
         raise ValueError("No displayed time bins.")
     n_components = result["settings"]["n_components"]
-    fig, axes = plt.subplots(2, n_components, figsize=(5*n_components, 8),
-                             sharex=True, squeeze=False, layout="constrained")
+    fig = plt.figure(figsize=(5*n_components, 11), layout="constrained")
+    grid = fig.add_gridspec(4, n_components, height_ratios=[3, 1, 3, 1])
+    axes = np.empty((2, n_components), dtype=object)
+    loadings = np.concatenate([result["modes"][mode]["model"].components_[:n_components]
+                               for mode in ("raw", "baseline_subtracted")])
+    limit = max(float(np.abs(loadings).max()) * 1.05, .01)
+    unit_positions = np.arange(len(result["neuron_ids"]))
+    unit_labels = [str(unit).rsplit("_neuron", 1)[-1] for unit in result["neuron_ids"]]
     for row, mode in enumerate(("raw", "baseline_subtracted")):
         model = result["modes"][mode]["model"]
-        for pc, ax in enumerate(axes[row]):
+        for pc in range(n_components):
+            ax = fig.add_subplot(grid[2*row, pc], sharex=axes[0, 0] if row or pc else None)
+            axes[row, pc] = ax
+            weight_ax = fig.add_subplot(grid[2*row+1, pc])
+            weights = model.components_[pc]
+            weight_ax.bar(unit_positions, weights, color=".55", width=.8)
+            weight_ax.axhline(0, color=".25", linewidth=.8)
+            weight_ax.set(xlabel="Unit", ylabel="PC weight",
+                          xlim=(-.7, len(weights)-.3), ylim=(-limit, limit))
+            weight_ax.set_xticks(unit_positions, unit_labels)
+            weight_ax.tick_params(axis="x", labelsize=7,
+                                  rotation=45 if any(len(label) > 3 for label in unit_labels) else 0)
+            weight_ax.tick_params(axis="y", labelsize=8)
+            weight_ax.text(.98, .92, f"n={len(weights)} units", transform=weight_ax.transAxes,
+                           ha="right", va="top", fontsize=8)
             for condition, name, color in ((0, "Tracking", "red"), (1, "Playback", "black")):
                 values = result["modes"][mode]["conditions"][condition]
                 mean, sem = values["mean"][visible, pc], values["sem"][visible, pc]

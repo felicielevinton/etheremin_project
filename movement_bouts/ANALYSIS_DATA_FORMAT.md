@@ -421,3 +421,46 @@ saved separately. All outputs live in data/derived/umap_composition/{digest}/,
 with analysis.pkl, summary tables, provenance JSON and PNGs. Source fits remain
 unchanged. Results describe associations for the chosen saved UMAP realization,
 not causal effects or significance across independent animals.
+
+
+## Onset-aligned PC time courses
+
+`principal_component_psth.ipynb` and `pc_psth.py` reuse each activity mode's
+saved tracking PCA. Both conditions use its mean and loadings; exact original
+recording neuron IDs/order are required. Raw/corrected modes use their own
+saved bases, whose component identities and signs need not agree. Do not pool
+PC labels across sessions.
+
+`project_pc_psths` returns labels/excluded_bouts with original bout indices,
+centers_s, neuron_ids, settings, and modes[mode][conditions][condition] entries:
+bout_ids, bout_scores (bouts x time x components), n_bouts, mean and sem
+(time x components). Each mode also retains its tracking model. Baseline
+subtraction acts on raw neural rates per bout/unit before smoothing and the
+fixed PCA transform; no PC-level baseline subtraction is added. The saved
+PCA training mean can give corrected scores a nonzero baseline.
+
+Default extraction [-1.2, 1) includes baseline [-1, -.7) and smoothing margins;
+display [-.5, .5), native 5 ms bins, Gaussian sigma .01 s. SEM is across bouts;
+it is not a confidence interval across independent animals. Displayed post-onset
+activity is outside the PCA training interval. In-memory results retain PCA paths/hashes, preprocessing settings, session
+identity and direction selection. Figures display in the notebook, with no
+automatic file saving. Original fits remain unchanged.
+
+
+### In-memory PC PSTH precomputation
+
+The PC PSTH notebook builds `pc_psth_cache["sessions"][idx][direction]`, where
+`direction` is None/all, -1/left or +1/right. `summarize_pc_psths` derives these
+views from one full projection per session. Each cached view retains settings,
+time centers, neuron IDs, model references, n_complete_bouts, n_excluded_bouts,
+and per-mode/condition bout_ids, n_bouts, mean and sem. It drops bout_scores and
+source recordings. Unknown directions enter only the all-bouts view; empty
+subsets have zero counts and undefined mean/SEM.
+
+The notebook groups original recording loads by source, releases the last
+collection after precomputation, and validates a cache signature covering PCA
+paths/hashes, selected sessions, baseline, extraction, binning, components and
+smoothing. Changed settings require rerunning precomputation. Display limits
+can change without recomputing within the cached interval. All summaries stay
+in memory only; restarting the kernel requires precomputation again. Both
+slider and direction callbacks only retrieve and redraw cached summaries.

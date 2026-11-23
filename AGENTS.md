@@ -556,3 +556,51 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
 - Save bundles, tables, source fingerprints and four PNGs under
   data/derived/umap_composition/{digest}/. Tests in test_session_composition.py
   cover confounding reversal, preserved IDs/exclusions and nonidentifiable designs.
+
+
+## Onset-aligned PC score time courses
+
+- `movement_bouts/principal_component_psth.ipynb` plots PC1-3 for one session,
+  with raw/corrected rows, tracking red and playback black, mean +/- SEM across
+  complete bouts. The user explicitly chose shared TRACKING PCA axes for both
+  conditions. Use fixed saved tracking loadings AND training mean; never refit
+  or recenter playback. Each mode uses its own saved tracking PCA, so row-wise
+  component identities/signs can differ; do not average PCs across sessions.
+- Default saved PCA inputs: all neurons, five 100 ms windows over [-0.5, 0),
+  raw and baseline_subtracted_-1_-0.7 run paths. Verify source hashes and exact
+  recorded neuron IDs/order; reject whitening/standardization and missing PCs.
+- Read original recordings for post-onset data, caching one source collection.
+  Extract [-1.2, 1), display [-0.5, .5), native 5 ms bins, Gaussian sigma .01 s
+  (0 disables). In corrected mode subtract each bout/neuron's raw [-1, -.7)
+  baseline, then smooth, then apply saved PCA transform. This is weighted neural
+  activity in PC units; no additional score-baseline re-zeroing is performed.
+  Corrected PC baseline need not be zero because of the saved PCA training mean.
+- `pc_psth.py` keeps indexed complete-bout labels, exclusions, per-bout scores,
+  mean/SEM, time centers and provenance. Complete-window selection is identical
+  between modes/neurons. Conditions are assigned at onset; transition-crossing
+  windows are not separately excluded. Post-onset data lie outside the PCA fit
+  interval. Symmetric smoothing can spread responses across onset.
+- `summarize_pc_psths` reduces one session's projected bouts to all/left/right
+  means/SEMs, bout counts/IDs and model references. Unknown directions enter only
+  the all-direction view. No per-bout score arrays are retained in the cache.
+- Notebook precompute cell projects all eligible sessions once, groups recording
+  loads by source collection, derives all directions from each projection, then
+  releases the recordings. `pc_psth_cache` is memory-only; completed sessions can
+  be reused on a rerun with matching settings. Settings changes invalidate the
+  cache; display limits can change within the extraction without recomputation.
+  CACHE_SESSION_INDICES optionally restricts scope (default all eligible sessions).
+  Slider/direction callbacks use get_cached_pc_psth only: no I/O or projection.
+- Notebook includes an embedded static first-session plot and a widget browser
+  selecting session with a SelectionSlider (continuous_update=False, actual saved
+  idx values) and initial direction. Animal/headstage/recording identity appears
+  below the slider; controls redraw static figures. Selected
+  traces remain in memory; figures display only in the notebook. User requested
+  no automatic file saving (neither PNGs nor result bundles).
+  No original PCA models or extraction outputs are overwritten.
+- Each PC PSTH has a small BAR PLOT below it: x=individual units in the
+  original recording/PCA order (neuron ID suffix labels), y=signed loading from
+  model.components_[pc]. User clarified this is not a weight-distribution
+  histogram. Use a zero line and common symmetric y limits across all PCs/modes.
+  Changing this display does not invalidate or recompute the in-memory PSTH cache.
+- Tests in test_pc_psth.py verify equality with sklearn transforms for both
+  modes, correct stored centering, IDs/bounds, SEM, missing conditions and models.
