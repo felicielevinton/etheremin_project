@@ -703,3 +703,93 @@ def plot_paired_bias_differences(summary, *, score="r2_adjusted"):
     )
     fig.tight_layout()
     return fig, ax, paired
+
+
+def fit_session_composition_associations(
+    table, *, score, fractions, numeric_controls, categorical_controls,
+):
+    """Describe one composition fraction at a time versus a session-level score.
+
+    Call separately for each condition/activity mode: never pool repeated scores
+    from one session. Fractions are in [0, 1]. Fit controls-only and controls plus
+    one fraction on identical finite rows. Report slope per 10 percentage points,
+    residual correlation and added across-session R2, without p-values or CIs.
+    Preserve original session IDs in fitted/residual tables. Collinear fractions
+    and saturated designs are explicitly skipped. This does not refit embeddings.
+    """
+    from sklearn.linear_model import LinearRegression
+
+    if not table.index.is_unique:
+        raise ValueError("Use one uniquely indexed row per session, condition and activity mode.")
+    if not fractions:
+        raise ValueError("Supply at least one named composition-fraction column.")
+    numeric_controls, categorical_controls = list(numeric_controls), list(categorical_controls)
+    needed = {score, *fractions.values(), *numeric_controls, *categorical_controls}
+    missing = needed.difference(table.columns)
+    if missing:
+        raise ValueError("Missing columns: " + ", ".join(sorted(missing)))
+    records, fits = [], {}
+    for name, column in fractions.items():
+        numeric = table[[score, column, *numeric_controls]].astype(float)
+        valid = np.isfinite(numeric).all(axis=1) & table[categorical_controls].notna().all(axis=1)
+        selected = table.loc[valid]
+        record = {"neuron_type": name, "fraction_column": column, "n_candidates": len(table),
+                  "n_sessions": len(selected), "n_excluded": int((~valid).sum()),
+                  "pearson_r": np.nan, "spearman_r": np.nan, "partial_r": np.nan,
+                  "coefficient_per_10pp": np.nan, "controls_session_r2": np.nan,
+                  "full_session_r2": np.nan, "added_session_r2": np.nan,
+                  "controls_rank": np.nan, "full_rank": np.nan, "df_residual": np.nan,
+                  "status": "skipped", "reason": ""}
+        x = selected[column].to_numpy(dtype=float)
+        y = selected[score].to_numpy(dtype=float)
+        if ((x < 0) | (x > 1)).any():
+            raise ValueError("Composition fractions must be between zero and one.")
+        if len(selected) < 3 or np.ptp(x) == 0 or np.ptp(y) == 0:
+            record["reason"] = "Insufficient sessions or constant fraction/score."
+            records.append(record)
+            continue
+        record["pearson_r"] = float(np.corrcoef(x, y)[0, 1])
+        record["spearman_r"] = float(pd.Series(x).rank().corr(pd.Series(y).rank()))
+        controls = selected[numeric_controls].astype(float).copy()
+        for category in categorical_controls:
+            controls = controls.join(pd.get_dummies(selected[category], prefix=category, drop_first=True, dtype=float))
+        # Constant column permits intercept-only control models too.
+        if controls.shape[1] == 0:
+            controls["constant"] = 1.0
+        control_design = np.column_stack([np.ones(len(selected)), controls.to_numpy()])
+        full_design = np.column_stack([control_design, x])
+        rank_controls = np.linalg.matrix_rank(control_design)
+        rank_full = np.linalg.matrix_rank(full_design)
+        record.update(controls_rank=rank_controls, full_rank=rank_full,
+                      df_residual=len(selected) - rank_full)
+        if rank_full <= rank_controls or len(selected) <= rank_full:
+            record["reason"] = "Fraction is explained by controls or full design has no residual degrees of freedom."
+            records.append(record)
+            continue
+        baseline = LinearRegression().fit(controls, y)
+        full_input = controls.copy()
+        full_input["composition_fraction"] = x
+        full = LinearRegression().fit(full_input, y)
+        x_residual = x - LinearRegression().fit(controls, x).predict(controls)
+        y_residual = y - baseline.predict(controls)
+        if np.linalg.norm(x_residual) <= 1e-10 * max(np.linalg.norm(x), 1):
+            record["reason"] = "No meaningful fraction variation remains after controls."
+            records.append(record)
+            continue
+        slope = float(x_residual @ y_residual / (x_residual @ x_residual))
+        record.update(coefficient_per_10pp=slope * .1,
+                      controls_session_r2=baseline.score(controls, y),
+                      full_session_r2=full.score(full_input, y), status="ok")
+        record["added_session_r2"] = record["full_session_r2"] - record["controls_session_r2"]
+        if np.linalg.norm(y_residual) > 1e-10 * max(np.linalg.norm(y), 1):
+            record["partial_r"] = float(np.corrcoef(x_residual, y_residual)[0, 1])
+        fits[name] = {"controls_model": baseline, "full_model": full,
+                      "control_columns": controls.columns.tolist(), "full_columns": full_input.columns.tolist(),
+                      "observations": pd.DataFrame({"fraction": x, "observed_score": y,
+                          "controls_fitted": baseline.predict(controls), "full_fitted": full.predict(full_input),
+                          "fraction_residual": x_residual, "score_residual": y_residual}, index=selected.index)}
+        records.append(record)
+    return {"summary": pd.DataFrame(records).set_index("neuron_type"), "fits": fits,
+            "settings": {"score": score, "fractions": dict(fractions),
+                         "numeric_controls": numeric_controls, "categorical_controls": categorical_controls,
+                         "scoring": "descriptive_in_sample_session_association", "fraction_step": .1}}

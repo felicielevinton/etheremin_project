@@ -394,3 +394,30 @@ within an animal. Missing/failed scores do not remove source metadata boundaries
 This shared display is used by the all-neuron PCA, neuron-type PCA and UMAP
 notebooks. Movement-bout heatmaps show equivalent separators in displayed-row
 coordinates, preserving their existing preference for one headstage per recording.
+
+
+## Session-level cell composition and UMAP score associations
+
+`umap_cell_composition.ipynb` joins the composition audit to saved UMAP
+initial-position regression scores on original `idx`. The `session_scores`
+table is indexed by (activity_mode, idx, condition), with membership and source
+checks, counts, classified-unit fractions, classification coverage, source
+scores and behavioral sampling controls. Missing classifications stay unknown;
+zero-classified sessions cannot enter the type-fraction models.
+
+This analysis uses session-level observations rather than bout/window rows.
+`fit_session_composition_associations` therefore requires a unique session index
+and runs separately per activity-mode/condition. Models compare one type fraction
+at a time to a controls-only model on identical rows. Output retains Pearson and
+Spearman correlations, coefficients per 10 percentage points, partial correlation,
+controls/full across-session R2 and their difference, rank/df/skip reasons,
+models and indexed fitted/residual values. No p-values or confidence intervals
+are introduced. These association-model R2 values are distinct from the source
+UMAP starting-position regression R2 used as the outcome.
+
+Paired tables use one tracking-minus-playback score per session and differences
+in behavioral sampling controls. A fully classified-session sensitivity check is
+saved separately. All outputs live in data/derived/umap_composition/{digest}/,
+with analysis.pkl, summary tables, provenance JSON and PNGs. Source fits remain
+unchanged. Results describe associations for the chosen saved UMAP realization,
+not causal effects or significance across independent animals.

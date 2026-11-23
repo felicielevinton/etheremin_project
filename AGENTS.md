@@ -524,3 +524,35 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
 - Save tables/inventory/provenance in data/derived/neuron_type_composition/{digest}/
   as pickle, JSON settings and two PNGs. Models and performance files are untouched.
   Composition may contextualize performance, but does not establish causation.
+
+
+## UMAP starting-position scores versus cell composition
+
+- `movement_bouts/umap_cell_composition.ipynb` independently loads explicit
+  composition.pkl and UMAP-overall run paths; never choose the latest silently.
+  Reuse saved UMAP initial-position pooled evaluations, validate target, coordinates,
+  all-neuron scope, session/source identity and exact fitted neuron membership.
+  No original embedding or starting-position regression is refitted.
+- Main fractions are among classified neurons, not all recorded neurons.
+  Exclude zero-classified sessions, report coverage separately, and show a
+  sensitivity analysis using only fully classified sessions. The inspected run
+  has 80 scored sessions, 72 with some classification, 67 fully classified.
+- Four independent strata: raw/corrected x tracking/playback. Each association
+  uses one row per session. Scatter markers identify animal/headstage, type colors
+  retain the existing palette. Diagnostics show total units and coverage.
+- `evaluation.fit_session_composition_associations` fits one type fraction at a
+  time against score, controls: total units, coverage, log1p(bout count), position
+  spread, absolute starting-side bias and animal/headstage categorical indicators.
+  Behavioral controls use actual scored bouts counted once. Coefficients are per
+  +10 percentage points; retain simple Pearson/Spearman, partial r, controls/full
+  across-session R2, added across-session R2, indexed residuals and saved models.
+  The association model's R2 differs from the source UMAP starting-position R2.
+- A paired analysis relates composition to tracking-minus-playback R2, separately
+  by activity mode, using differences of behavioral controls and shared composition.
+  Fits are descriptive/in-sample with no p-values/CIs or causal claims, and no
+  neuron-count matching, randomization or new UMAP seed fitting. Type fractions
+  sum to one, so do not fit all four with an intercept; independent type fits
+  describe a type versus the aggregate of the remaining types.
+- Save bundles, tables, source fingerprints and four PNGs under
+  data/derived/umap_composition/{digest}/. Tests in test_session_composition.py
+  cover confounding reversal, preserved IDs/exclusions and nonidentifiable designs.
