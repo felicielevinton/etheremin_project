@@ -61,6 +61,11 @@ in both raw and baseline-subtracted modes.
 | `initial_direction` | -1 = left, +1 = right; 0/unknown is not either direction |
 | `final_position` | Observed movement endpoint position; missing for unfinished bouts |
 | `total_movement`, `mean_speed`, onset/end fields | Original bout measurements |
+| `early_mean_speed` | Mean absolute speed over the capped early interval |
+| `peak_speed` | Maximum absolute speed over that same early interval |
+| `peak_speed_latency_s` | Time after onset of the earliest maximum |
+| `early_speed_duration_s` | Actual observed length of the early interval |
+| `early_speed_complete` | The capped interval was recorded in full, including an earlier known bout end |
 | `bin_number` | Chronological window number, starting at 0 |
 | `bin_end_s` | Exclusive window end relative to movement onset |
 
@@ -68,6 +73,26 @@ Bout measurements are repeated across windows, not recalculated within each
 premotor window. In particular, `mean_speed` describes the detected movement
 bout, not its preceding premotor window. Position units need verification before
 calling them cm. `final_position` is an observed endpoint, not a planned target.
+
+The extraction notebook's selectable `EARLY_SPEED_WINDOW_S` defaults to 1.0 s.
+Both early speed summaries use `[onset, min(onset + EARLY_SPEED_WINDOW_S, end))`,
+where end is the next qualifying immobility start under the existing bout
+definition. Samples come from `abs(Speed_x * SPEED_X_FACTOR)` in position units/s;
+no new smoothing is applied. Peak latency uses the earliest maximum on ties and
+is strictly before the interval stop. `mean_speed` remains the whole-bout mean.
+For unfinished bouts, early values can still be measured when the full cap is
+recorded. If the recording ends too soon, the observed duration is saved and
+`early_speed_complete=False`; early mean/peak/latency remain missing. No bouts are
+discarded by this computation. The chosen initial evaluation targets are
+`initial_position`, `early_mean_speed` and `peak_speed`; other labels are retained.
+
+`save_movement_bout_tables` archives a replaced bout pickle by its SHA-256 under
+`movement_bouts/source_versions/` and keeps unchanged table files byte-identical.
+For existing extraction/model fingerprints, `validate_bout_sources` permits a
+column-only addition after verifying the archived hash and exact original values,
+dtypes and row/index order. Other source changes require regeneration. Historical
+models keep their original provenance and do not automatically gain new labels;
+new evaluations should select current labels by their original bout IDs.
 
 ## Extraction, analysis windows and baseline subtraction
 

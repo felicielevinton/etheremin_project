@@ -1,5 +1,7 @@
 """Movement-bout detection and extraction of aligned premotor spike counts."""
 
+import hashlib
+import json
 import pickle
 from pathlib import Path
 
@@ -15,6 +17,7 @@ def detect_movement_bouts(
     speed_x_factor,
     velocity_threshold,
     min_immobility_s,
+    early_speed_window_s=1.0,
 ):
     """Return movement_bouts and immobility_bouts DataFrames for one session.
 
@@ -24,7 +27,18 @@ def detect_movement_bouts(
     following sample exists. Movement ends at the next qualifying immobility
     start. Unknown endpoints and their dependent measurements remain missing.
     Condition is read at onset, including bouts crossing condition boundaries.
+    Early mean/peak speed use [onset, min(onset + early_speed_window_s, end)).
+    End is the next qualifying immobility start, as for the full bout. An
+    unfinished bout can have early measurements if the complete requested
+    interval is recorded; recording-truncated intervals have missing speeds.
     """
+    if not np.isfinite(dt) or dt <= 0:
+        raise ValueError("dt must be a positive finite bin width in seconds.")
+    if not np.isfinite(early_speed_window_s) or early_speed_window_s <= 0:
+        raise ValueError("early_speed_window_s must be positive and finite.")
+    early_bins = round(early_speed_window_s / dt)
+    if early_bins < 1 or not np.isclose(early_bins * dt, early_speed_window_s, rtol=0, atol=1e-10):
+        raise ValueError("early_speed_window_s must align with the original time bins.")
     position = session_features["Position"].to_numpy()
     speed = session_features["Speed_x"].to_numpy() * speed_x_factor
 
@@ -79,8 +93,26 @@ def detect_movement_bouts(
     movement_bouts["final_position"] = np.nan
     movement_bouts["total_movement"] = np.nan
     movement_bouts["mean_speed"] = np.nan
+    movement_bouts["early_mean_speed"] = np.nan
+    movement_bouts["peak_speed"] = np.nan
+    movement_bouts["peak_speed_latency_s"] = np.nan
+    movement_bouts["early_speed_duration_s"] = np.nan
+    movement_bouts["early_speed_complete"] = False
 
     for bout_idx, (onset, end) in enumerate(zip(movement_starts, movement_ends)):
+        requested_stop = onset + early_bins
+        if np.isfinite(end):
+            requested_stop = min(requested_stop, int(end))
+        observed_stop = min(requested_stop, len(speed))
+        movement_bouts.loc[bout_idx, "early_speed_duration_s"] = (observed_stop - onset) * dt
+        complete = observed_stop == requested_stop and observed_stop > onset
+        movement_bouts.loc[bout_idx, "early_speed_complete"] = complete
+        early_speed = np.abs(speed[onset:observed_stop])
+        if complete and np.isfinite(early_speed).all():
+            peak_offset = int(np.argmax(early_speed))
+            movement_bouts.loc[bout_idx, "early_mean_speed"] = early_speed.mean()
+            movement_bouts.loc[bout_idx, "peak_speed"] = early_speed[peak_offset]
+            movement_bouts.loc[bout_idx, "peak_speed_latency_s"] = peak_offset * dt
         if np.isfinite(end):
             end = int(end)
             movement_bouts.loc[bout_idx, "final_position"] = position[end]
@@ -91,6 +123,73 @@ def detect_movement_bouts(
             movement_bouts.loc[bout_idx, "mean_speed"] = speed[onset:end].mean()
 
     return movement_bouts, immobility_bouts
+
+
+def save_movement_bout_tables(movement_bouts, immobility_bouts, session_info, parameters, output_dir):
+    """Save the reference tables, retaining earlier bout bytes for provenance.
+
+    Unchanged tables keep their original file bytes and hashes. A replaced bout
+    table is archived by SHA-256 so existing analyses can verify that an update
+    only adds columns, rather than changing their original observations.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name, table in (
+        ("movement_bouts.pkl", movement_bouts),
+        ("immobility_bouts.pkl", immobility_bouts),
+        ("session_info.pkl", session_info),
+    ):
+        path = output_dir / name
+        if path.exists():
+            previous = pd.read_pickle(path)
+            if previous.equals(table):
+                continue
+            if name == "movement_bouts.pkl":
+                previous_bytes = path.read_bytes()
+                digest = hashlib.sha256(previous_bytes).hexdigest()
+                archive = output_dir / "source_versions" / f"{digest}.pkl"
+                archive.parent.mkdir(exist_ok=True)
+                if archive.exists():
+                    if hashlib.sha256(archive.read_bytes()).hexdigest() != digest:
+                        raise ValueError(f"Archived bout source is corrupt: {archive}")
+                else:
+                    archive.write_bytes(previous_bytes)
+                previous_parameters = output_dir / "parameters.json"
+                archived_parameters = archive.with_suffix(".parameters.json")
+                if previous_parameters.exists() and not archived_parameters.exists():
+                    archived_parameters.write_bytes(previous_parameters.read_bytes())
+        temporary = path.with_suffix(".pkl.tmp")
+        table.to_pickle(temporary)
+        temporary.replace(path)
+    parameter_path = output_dir / "parameters.json"
+    parameter_temporary = parameter_path.with_suffix(".json.tmp")
+    parameter_temporary.write_text(json.dumps(parameters, indent=2) + "\n", encoding="utf-8")
+    parameter_temporary.replace(parameter_path)
+
+
+def validate_bout_sources(bout_dir, source_sha256):
+    """Verify exact sources, allowing an audited column-only bout extension.
+
+    Old hashes remain meaningful: an archived pickle must match the expected
+    hash, and every original column, value, dtype and row/index order must still
+    match the current table. Session metadata always requires its exact hash.
+    """
+    bout_dir = Path(bout_dir)
+    for filename, expected in source_sha256.items():
+        path = bout_dir / filename
+        if hashlib.sha256(path.read_bytes()).hexdigest() == expected:
+            continue
+        if filename == "movement_bouts.pkl" and len(expected) == 64 and all(
+            character in "0123456789abcdef" for character in expected
+        ):
+            archive = bout_dir / "source_versions" / f"{expected}.pkl"
+            if archive.is_file() and hashlib.sha256(archive.read_bytes()).hexdigest() == expected:
+                previous, current = pd.read_pickle(archive), pd.read_pickle(path)
+                if (previous.index.identical(current.index)
+                        and previous.columns.isin(current.columns).all()
+                        and previous.equals(current.loc[:, previous.columns])):
+                    continue
+        raise ValueError(f"{filename} differs from the saved source; regenerate aligned results.")
 
 
 def _window_bins(window_s, dt, name):

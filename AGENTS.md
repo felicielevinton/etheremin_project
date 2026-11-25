@@ -279,6 +279,24 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
 - Movement fields are `animal`, `headstage`, `session`, `condition`, `onset_bin`,
   `onset_time_s`, `end_bin`, `end_time_s`, `initial_position`, `initial_direction`,
   `final_position`, `total_movement`, `mean_speed`, and `idx`.
+- The selected initial decoding targets are starting position, early mean speed
+  and early peak speed. Keep all other bout fields; no new filtering is applied.
+  `EARLY_SPEED_WINDOW_S` in `analyse_movement_bouts.ipynb` is selectable, default
+  1.0 s for both mean and peak. Use [onset, min(onset + cap, next qualifying
+  immobility start)), with the existing MIN_IMMOBILITY_S definition of immobility.
+  Added fields: `early_mean_speed`, `peak_speed`, `peak_speed_latency_s` (earliest
+  maximum on ties), `early_speed_duration_s`, `early_speed_complete`.
+  Units are position units/s and seconds. Known earlier bout ends are complete
+  windows; recording-truncated windows retain their duration but missing early
+  speeds/latency. Unfinished bouts can have valid early speeds if the cap is observed.
+- `save_movement_bout_tables` preserves file bytes for unchanged tables and archives
+  replaced bout pickles/parameters in `source_versions/{old_sha256}.pkl` and
+  `{old_sha256}.parameters.json`. `validate_bout_sources` accepts an old bout hash
+  only if its archived bytes match and all original columns, values, dtypes and
+  row/index order still match the current table. Session metadata needs its exact
+  hash. This permits metadata-only additions without refitting existing models;
+  changed original observations still fail validation. PCA/UMAP input notebooks
+  and the shared-tracking PC time-course notebook use this guard.
 - Immobility fields are `start_bin`, `stop_bin`, `duration_s`, `qualifies`, `idx`,
   `animal`, `headstage`, and `session`.
 
@@ -306,7 +324,8 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
 - `parameters.json` beside the extracted counts records DT, window_s, n_time_bins,
   source-table SHA-256 fingerprints,
   source bout-detection parameters, session indices, and export time. Regenerate
-  neural outputs if the reference bout table is regenerated or its indices change.
+  neural outputs if original bout values or indices change. Pure column additions
+  can reuse counts after `validate_bout_sources` verifies the archived original.
 - Averaging is separate from extraction: `N_BINS` divides ANALYSIS_WINDOW_S,
   initially [-0.5, 0), rather than the whole saved array. Five windows give 100 ms,
   two give 250 ms, one gives 500 ms. Sum counts in each window
@@ -604,3 +623,21 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   Changing this display does not invalidate or recompute the in-memory PSTH cache.
 - Tests in test_pc_psth.py verify equality with sklearn transforms for both
   modes, correct stored centering, IDs/bounds, SEM, missing conditions and models.
+
+## Overall movement-bout characterisation
+
+- `movement_bouts/movement_bout_characterisation.ipynb` independently reads saved
+  bout/session tables and detection parameters, without original recordings or neural data.
+  Default: one entry per animal/session, preferring hs0 and retaining hs1-only sessions,
+  matching the movement-bout heatmaps. Paired headstage recording IDs were verified to
+  agree, but extracted behaviour differs slightly; select one stream rather than deduplicating rows.
+- Preserve original bout/session IDs. Show tracking red/playback black: full-range
+  speed/duration/path distributions and ECDFs, distance-duration/endpoint plots,
+  paired session medians by animal, independent hypothetical cutoff curves/tables,
+  and largest-bout IDs/onset times. Duration=end-onset; directness=abs(end-start)/path.
+  Use position units; saved mean_speed describes the whole bout, not initial/peak speed.
+- No movement filters or detection changes are applied. Missing endpoints are counted
+  per metric. SESSION_INDICES and ONE_HEADSTAGE_PER_RECORDING control scope.
+  SAVE_FIGURES writes four PNGs, characterisation_tables.pkl and provenance.json to
+  data/derived/movement_bouts/characterisation/{scope}_{selection_digest}/.
+  The notebook includes executed figures. Original bout/extraction tables remain unchanged.
