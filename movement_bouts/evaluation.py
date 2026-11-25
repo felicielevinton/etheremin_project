@@ -252,7 +252,7 @@ def plot_label_regression(regression, *, ax=None, color="black"):
     return ax.figure, ax
 
 
-def run_label_regressions(pca_cache, *, target, columns, min_displacement=None):
+def run_label_regressions(pca_cache, *, target, columns, min_displacement=None, bout_labels=None):
     """Fit one pooled regression per session and condition, using all windows.
 
     Select columns directly from each saved results table. An optional strict
@@ -260,6 +260,11 @@ def run_label_regressions(pca_cache, *, target, columns, min_displacement=None):
     Invalid/insufficient subsets get a skipped status/reason. Return summary,
     fits and settings; summary/fit keys are (idx, condition). Prediction tables
     retain the full (bout_id, bin_start_s) index.
+
+    Optional bout_labels supplies a current target indexed by original bout ID,
+    with idx and condition columns for identity checks. Match by ID, repeat the
+    target across each bout's windows, and override any cached target values.
+    Neither source table nor saved representation coordinates/models are changed.
 
     Report both n_observations (bout/window rows) and n_bouts. Degrees of freedom
     and adjusted R2 use the design's row count; they do not correct for dependence
@@ -275,12 +280,29 @@ def run_label_regressions(pca_cache, *, target, columns, min_displacement=None):
         not np.isfinite(min_displacement) or min_displacement < 0
     ):
         raise ValueError("min_displacement must be None or a finite nonnegative number.")
+    if bout_labels is not None:
+        if not isinstance(bout_labels, pd.DataFrame):
+            raise TypeError("bout_labels must be a DataFrame indexed by original bout ID.")
+        if bout_labels.index.nlevels != 1 or not bout_labels.index.is_unique:
+            raise ValueError("bout_labels must have one unique row per original bout ID.")
+        missing = {target, "idx", "condition"}.difference(bout_labels.columns)
+        if missing:
+            raise ValueError("bout_labels is missing columns: " + ", ".join(sorted(missing)))
 
     records, fits = [], {}
     for idx, condition_fits in pca_cache["sessions"].items():
         info = pca_cache["session_info"].loc[idx]
         for condition, pca_fit in condition_fits.items():
             rows = pca_fit["results"]
+            if bout_labels is not None:
+                bout_ids = rows.index.get_level_values("bout_id")
+                if not bout_ids.isin(bout_labels.index).all():
+                    raise ValueError(f"Current bout labels are missing saved bout IDs for idx={idx}, condition={condition}.")
+                current = bout_labels.loc[bout_ids]
+                if not current["idx"].eq(idx).fillna(False).all() or not current["condition"].eq(condition).fillna(False).all():
+                    raise ValueError(f"Current bout labels disagree with saved session/condition for idx={idx}, condition={condition}.")
+                rows = rows.copy()
+                rows[target] = current[target].to_numpy()
             record = {
                 "idx": idx, "condition": condition,
                 "n_windows": int(rows["bin_number"].nunique()),
@@ -335,6 +357,7 @@ def run_label_regressions(pca_cache, *, target, columns, min_displacement=None):
             "target": target, "columns": columns, "min_displacement": min_displacement,
             "displacement_rule": "abs(final_position - initial_position) > cutoff",
             "window_mode": "pooled", "scoring": "descriptive_in_sample",
+            "target_source": "current_bout_labels" if bout_labels is not None else "saved_representation_labels",
             "projection_basis": pca_cache.get("projection_basis", "separate_condition_pcas"),
             ("representation_settings" if pca_cache.get("representation") == "UMAP" else "pca_settings"):
                 dict(pca_cache.get("settings", {})),

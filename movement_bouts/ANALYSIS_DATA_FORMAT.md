@@ -291,6 +291,15 @@ window together. Windows remain separate observations; they are not averaged.
 An optional cutoff retains `abs(final_position - initial_position) > cutoff`,
 including both displacement directions and excluding unknown endpoints.
 
+For labels added after PCA fitting, pass `bout_labels=movement_bouts`. This
+optional reference table has one row per original bout ID and must include the
+target, `idx` and `condition`. The helper matches IDs, checks session/condition
+membership, and repeats the current target across each bout's saved windows.
+It overrides stale cached values without changing the input tables or PCA fits.
+Unknown bout IDs or conflicting membership fail explicitly; missing target
+values are still excluded separately for each regression. The settings identify
+`target_source` as `current_bout_labels` or `saved_representation_labels`.
+
 The returned bundle has three parts:
 
 - `summary`: a DataFrame indexed by `(idx, condition)`, one row per PCA. It records
@@ -305,6 +314,17 @@ The returned bundle has three parts:
   `(bout_id, bin_start_s)` observation IDs.
 - `settings`: target, feature columns, cutoff, `window_mode="pooled"`, source PCA
   settings and representation basis.
+
+Sections 23-25 of `analyse_neuronal_activity.ipynb` apply this to
+`early_mean_speed` and `peak_speed`. Run section 1 followed by those sections to
+reuse the chosen saved PCA, with selectable `SPEED_REGRESSION_COLUMNS` (PC1-PC3)
+and `SPEED_REGRESSION_SCORE` (adjusted R2 by default). No displacement filter is
+used. Both target definitions come from the saved bout parameters, including
+their early window cap. Bundles retain current bout/parameter fingerprints and
+the exact source PCA hash; filename digests distinguish label sources and target
+definitions. Separate summary/paired PNGs and paired-score pickles save alongside
+the bundles. Cached PCA files are never rewritten. These fits do not control for
+starting position and remain descriptive/in-sample.
 
 Residual degrees of freedom are `n_observations - rank(design including intercept)`.
 Adjusted R2 is `1 - (1-R2)*(n_observations-1)/df_residual`, and is NaN for zero

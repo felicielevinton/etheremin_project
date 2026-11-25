@@ -521,6 +521,27 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   significance tests were requested. Sections 18-21 keep their prior behavior.
 
 
+## PCA regressions for early mean and peak speed
+
+- `analyse_neuronal_activity.ipynb` sections 23-25 reuse the saved all-neuron PCA
+  selected by section 1. No dependency on the older destination/direction fits.
+  Settings expose SPEED_REGRESSION_COLUMNS (PC1-PC3) and SPEED_REGRESSION_SCORE
+  (adjusted R2 default). Both targets pool all windows per session/condition,
+  apply no displacement filter, and retain descriptive/in-sample evaluation.
+- `evaluation.run_label_regressions(..., bout_labels=movement_bouts)` reads the
+  current target by original bout ID, verifies idx/condition membership, and
+  overrides stale cached target values without modifying the PCA/cache inputs.
+  Missing target rows are excluded per metric; unknown IDs/membership mismatch
+  fail. Default calls still use the labels in saved representation results.
+- Read the cap/definition from saved bout parameters. Validate old PCA source
+  hashes through validate_bout_sources, then record current bout/parameter hashes
+  and the exact PCA file hash in each evaluation bundle's target_definition.
+  Save two bundles, four PNGs and paired-score pickles in evaluation/, with
+  filenames identifying target, PCs, cap, bins and a source/settings digest.
+  No PCA files or previous target evaluations are overwritten. Starting position
+  is not controlled in these new fits. Tests in test_speed_regression.py check
+  current-label matching, stale values, exclusions, membership and no mutation.
+
 ## Neuron-type composition by animal/headstage
 
 - `movement_bouts/neuron_type_composition.ipynb` is a standalone count audit for
@@ -623,6 +644,39 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
   Changing this display does not invalidate or recompute the in-memory PSTH cache.
 - Tests in test_pc_psth.py verify equality with sklearn transforms for both
   modes, correct stored centering, IDs/bounds, SEM, missing conditions and models.
+
+## Population PSTHs by early mean speed
+
+- `movement_bouts/early_speed_population_psth.ipynb` is a simple standalone
+  movement-onset population PSTH using all saved sessions by default, with separate
+  tracking/playback panels. Groups: [0,.5), [.5,1), [1,1.5), [1.5,2), [2,3),
+  [3,4), [4,6), [6,10), [10,infinity)
+  position units/s from the saved early_mean_speed label. Invalid speeds are counted.
+- Settings select sessions, edges, extraction [-1.2,1.2), display [-.5,1), baseline
+  [-1,-.7), native 5 ms bins and Gaussian sigma .01 s (zero disables smoothing).
+  Reuse session_neuron_psths, averaging bouts within each neuron/group/condition
+  before equal weighting of recorded session units. Shading is SEM across unit
+  PSTHs, not independent animals. Group membership differs; report counts of
+  complete bouts, contributing units/sessions and bounds exclusions explicitly.
+- Load original neural collections one at a time; retain only unit PSTHs. The user
+  selected the same blue-to-red coolwarm speed scale in both condition panels;
+  SPEED_CMAP exposes it in settings. Color identifies speed, overriding the usual
+  condition colors for this plot. No original or derived
+  data files are written. Notebook includes its executed figure. Tests in
+  test_speed_population_psth.py exercise exact edges, IDs, equal-neuron weighting,
+  empty groups and bounds handling using the actual notebook code.
+- The same collection pass also computes unsmoothed QUANT_BIN_WIDTH_S=.1 s
+  PSTHs directly from counts, using the same per-bout baseline and unit weighting.
+  binned_neuron_psths retains unit means; binned_summary exposes exact means/SEMs,
+  interval bounds and coverage. Full-window tracking/playback heatmaps share one
+  zero-centered ACTIVITY_CMAP scale. No pre-onset zoom or sound masking: user
+  deferred those alternatives. Y labels report bout/unit counts per speed row.
+- A static selected-interval plot and SelectionSlider show group mean +/- SEM,
+  shared condition y scale, categorical speed intervals and matching speed colors.
+  The selector redraws cached summaries only (continuous_update=False), with no
+  recording reads or fitting. Its y scale updates for the selected interval.
+  Tests also check raw-count quantification, shared heatmap normalization and
+  the in-memory slider callback.
 
 ## Overall movement-bout characterisation
 

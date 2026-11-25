@@ -1,6 +1,7 @@
 """Check the new notebook's type matching, session cutoff and PCA wiring."""
 
 import contextlib
+import ast
 import io
 import json
 from pathlib import Path
@@ -13,16 +14,26 @@ import pandas as pd
 from utils import prepare_pca_input, fit_pca_by_condition
 
 
-CELLS = {
-    cell['id']: ''.join(cell['source'])
+CELL_SOURCES = [
+    ''.join(cell['source'])
     for cell in json.loads(Path(__file__).with_name('neuron_type_pca.ipynb').read_text(encoding='utf-8'))['cells']
     if cell['cell_type'] == 'code'
-}
+]
 
 
 def run_cell(cell_id, scope):
+    # nbstripout renumbers cell IDs. Locate the actual code by a unique top-level
+    # assignment so these checks also work against a freshly checked-out notebook.
+    assignment = {'select-sessions': 'category_to_cluster', 'fit-pcas': 'run_settings'}[cell_id]
+    matches = [source for source in CELL_SOURCES if any(
+        isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == assignment for target in node.targets
+        ) for node in ast.parse(source).body
+    )]
+    if len(matches) != 1:
+        raise AssertionError(f"Expected one notebook cell assigning {assignment}, found {len(matches)}.")
     with contextlib.redirect_stdout(io.StringIO()):
-        exec(compile(CELLS[cell_id], cell_id, 'exec'), scope)
+        exec(compile(matches[0], cell_id, 'exec'), scope)
 
 
 class NeuronTypePcaTests(unittest.TestCase):
