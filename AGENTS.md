@@ -647,6 +647,13 @@ Freq_position, Speed_bin, Acc_x_signed, Acc_x, Acc_sound
 
 ## Population PSTHs by early mean speed
 
+- `GROUP_FEATURE` selects early_mean_speed (default), peak_speed, or
+  peak_speed_latency_s. Both speeds use SPEED_EDGES in position units/s;
+  latency uses PEAK_LATENCY_EDGES_S (100 ms groups up to 1 s, then >=1 s).
+  Latency measures onset to the first maximum in the saved early interval.
+  All plots remain movement-onset aligned; labels follow the selection and
+  binned_summary records group_feature. Rerun below constants after changing it.
+
 - `movement_bouts/early_speed_population_psth.ipynb` is a simple standalone
   movement-onset population PSTH using all saved sessions by default, with separate
   tracking/playback panels. Groups: [0,.5), [.5,1), [1,1.5), [1.5,2), [2,3),

@@ -17,9 +17,10 @@ SOURCES = [''.join(c['source']) for c in NOTEBOOK['cells'] if c['cell_type'] == 
 
 
 class SpeedPopulationPsthTests(unittest.TestCase):
-    def load(self, bouts, sessions):
+    def load(self, bouts, sessions, feature='early_mean_speed'):
         scope = {}
         exec(SOURCES[0], scope)
+        scope['GROUP_FEATURE'] = feature
         scope['display'] = lambda *args: None
         with patch('pandas.read_pickle', side_effect=[bouts, sessions]), patch.object(
             Path, 'read_text', return_value=json.dumps({'DT': .1, 'EARLY_SPEED_WINDOW_S': 1.})
@@ -36,7 +37,21 @@ class SpeedPopulationPsthTests(unittest.TestCase):
         self.assertEqual(scope['bouts'].index.tolist(), list(range(101, 119)))
         self.assertEqual(scope['bouts']['speed_group'].tolist(), np.repeat(np.arange(9), 2).tolist())
 
-    def test_population_weights_neurons_equally_and_reports_neural_bounds(self):
+    def test_peak_speed_selection_and_latency_boundaries(self):
+        sessions = pd.DataFrame({'feature_file': ['sample_feature_ss']})
+        bouts = pd.DataFrame({'idx': 0, 'condition': 0,
+                              'early_mean_speed': [20.] * 8,
+                              'peak_speed': [0, .5, 2, 10, 30, np.nan, -1, np.inf],
+                              'peak_speed_latency_s': [0, .099, .1, .999, 1., np.nan, -1, np.inf]})
+        peak = self.load(bouts, sessions, 'peak_speed')
+        self.assertEqual(peak['bouts']['speed_group'].tolist(), [0, 1, 4, 8, 8])
+        latency = self.load(bouts, sessions, 'peak_speed_latency_s')
+        self.assertEqual(latency['bouts']['speed_group'].tolist(), [0, 0, 1, 9, 10])
+        self.assertEqual(latency['feature_label'], 'Time to early peak speed (s)')
+        with self.assertRaisesRegex(ValueError, 'GROUP_FEATURE'):
+            self.load(bouts, sessions, 'unknown')
+
+    def test_population_weights_neurons_equally_and_reports_neural_bounds(self, feature='early_mean_speed'):
         bouts = pd.DataFrame({
             'idx': [0, 0, 0, 0, 1, 1], 'condition': [0, 0, 1, 0, 0, 1],
             'onset_bin': [3, 10, 16, 0, 3, 16],
@@ -44,7 +59,13 @@ class SpeedPopulationPsthTests(unittest.TestCase):
         }, index=[17, 4, 93, 28, 117, 193])
         sessions = pd.DataFrame({'feature_file': ['sample_feature_ss'] * 2,
                                  'session': [0, 1], 'n_bins': [20, 20]})
-        scope = self.load(bouts, sessions)
+        if feature != 'early_mean_speed':
+            bouts[feature] = bouts['early_mean_speed']
+            if feature == 'peak_speed_latency_s':
+                # Match the original group IDs with actual latency-scale values.
+                bouts[feature] = bouts[feature].map({.5: .15, 2.: .45, .1: .05})
+            bouts['early_mean_speed'] = 30.  # Detect accidental fallback to mean speed.
+        scope = self.load(bouts, sessions, feature)
         scope.update(WINDOW_S=(-.2, .4), DISPLAY_WINDOW_S=(-.2, .4),
                      BASELINE_WINDOW_S=(-.2, 0), BIN_WIDTH_S=.1, SMOOTHING_SIGMA_S=0)
         a, b = np.zeros((2, 20)), np.zeros((1, 20))
@@ -84,6 +105,8 @@ class SpeedPopulationPsthTests(unittest.TestCase):
         self.assertIs(scope['axes_heatmap'][0].images[0].norm, scope['axes_heatmap'][1].images[0].norm)
         self.assertEqual(scope['bin_starts'][2], 0)
         self.assertTrue(np.isnan(scope['bin_means'][0][0]).all())
+        self.assertEqual(set(scope['binned_summary']['group_feature']), {feature})
+        self.assertEqual(scope['axes_heatmap'][0].get_ylabel(), scope['feature_label'])
         for interval in [0, len(scope['bin_starts']) - 1]:
             fig, axes = scope['plot_speed_interval'](interval)
             self.assertTrue(axes[0].get_shared_y_axes().joined(axes[0], axes[1]))
@@ -95,6 +118,12 @@ class SpeedPopulationPsthTests(unittest.TestCase):
         scope['interval_slider'].close()
         scope['interval_output'].close()
         scope['plt'].close('all')
+
+    def test_peak_speed_plots_and_selector(self):
+        self.test_population_weights_neurons_equally_and_reports_neural_bounds('peak_speed')
+
+    def test_peak_latency_plots_and_selector(self):
+        self.test_population_weights_neurons_equally_and_reports_neural_bounds('peak_speed_latency_s')
 
     def test_100ms_quantification_uses_unsmoothed_counts(self):
         bouts = pd.DataFrame({'idx': [0], 'condition': [0], 'onset_bin': [30],
